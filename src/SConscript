@@ -1,0 +1,35 @@
+SConscript( "loadbmp/SConscript" )
+
+env=Environment()
+
+# Note: -O1 must be used with MANUAL_SSE
+# Otherwise gcc will shit the bed
+
+env.ParseConfig( "sdl-config --libs --cflags" );
+env.ParseConfig( "pkg-config --libs --cflags glee" );
+env.Append( LIBPATH=["./loadbmp"] )
+env.Append( LIBS=Split("GLU GL loadbmp rt m pthread") )
+env.Append( CCFLAGS=Split(
+	"-Wall -Wextra -ansi -pedantic -pthread"
+	#" -g -O0"
+	" -O4 -ffast-math -funsafe-math-optimizations -ffinite-math-only"
+	" -Wno-char-subscripts" # No warning for using a char as a counter in loops
+	))
+#	" -ftree-vectorizer-verbose=7"
+
+if 0:
+	env.Append( CCFLAGS=["-pg"] )
+	env.Append( LINKFLAGS=["-pg"] )
+
+"""
+You can use -freg-struct-return with linux-elf, but it causes problems
+if you link with any library function that returns a struct, or call one
+that gets passed a pointer to a function that returns a struct.
+
+- Michael Meissner
+"""
+
+out="../rays.bin"
+src=Glob("*.c")
+obj=env.Object(source=src)
+bin=env.Program(target=out,source=obj)

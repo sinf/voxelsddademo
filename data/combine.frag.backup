@@ -1,0 +1,78 @@
+#version 120
+#extension GL_ARB_texture_rectangle: require
+
+uniform sampler2DRect input_tex_z; // Linear depth in eye space
+uniform sampler2DRect input_tex_m; // Material indexes
+uniform sampler2DRect input_mat_table; // Material color table
+uniform vec2 fov; // Field of view in radians
+uniform bool show_normals = false;
+
+/*
+uniform mat3 eye_to_world;
+uniform mat3 world_to_eye;
+uniform mat4 eye_to_ndc;
+*/
+
+// Lighting setup
+const vec3 light_dir = vec3( -0.57735027, 0.57735027, 0.57735027 );
+const float ambient = 0.3;
+
+const float PI = 3.14159265358979323846264;
+const float HALF_PI = PI * 0.5;
+
+void main( void )
+{
+	const ivec2 resolution = textureSize( input_tex_z, 0 );
+	
+	float x = gl_FragCoord.x;
+	float y = resolution.y - gl_FragCoord.y;
+	
+	/**
+	if ( true )
+	{
+		gl_FragColor = texelFetch( input_tex_z, ivec2(x,y) ) / 4000.0;
+		return;
+	}
+	/**/
+	
+	// Get the material index and color
+	int m_index = int( texelFetch( input_tex_m, ivec2(x,y) ).r * 255 );
+	vec4 m_color = texelFetch( input_mat_table, ivec2(m_index,0) );
+	
+	// Use background color when index <= 0
+	gl_FragColor = m_color;
+	
+	if ( m_index > 0 )
+	{
+		float z = texelFetch( input_tex_z, ivec2(x,y) ).r;
+		vec2 delta_z = vec2(
+				texelFetch( input_tex_z, ivec2(x+1,y) ).r - z,
+				texelFetch( input_tex_z, ivec2(x,y-1) ).r - z );
+		
+		vec2 pixel_size = vec2(
+				z * tan( fov.x ) / resolution.x,
+				z * tan( fov.y ) / resolution.y );
+		
+		vec2 temp = vec2( delta_z / pixel_size / HALF_PI );
+		vec3 nor = vec3( temp.xy, 0.5 ); // Not sure if Z should be 0.5, 1.0 or 2.0
+		nor = normalize( nor );
+		
+		if ( show_normals )
+		{
+			vec3 color = nor.xyz;
+			color += vec3( 1.0 );
+			color *= 0.5;
+			gl_FragColor = vec4( color, 1.0 );
+			return;
+		}
+		
+		// Apply diffuse shading
+		float dif = dot( nor, light_dir );
+		dif = clamp( dif, 0.0, 1.0 );
+		dif += ambient;
+		
+		// Output the shaded material color
+		gl_FragColor = vec4( vec3(m_color) * dif, 1.0 );
+	}
+}
+
