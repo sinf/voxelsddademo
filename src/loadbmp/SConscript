@@ -1,0 +1,3 @@
+env = Environment()
+env.Append( CCFLAGS = Split("-Wall -Wextra -ansi -pedantic -Os -g") )
+env.StaticLibrary( target="loadbmp", source="loadbmp.c" )
