@@ -3,6 +3,7 @@
 #include <xmmintrin.h>
 #include "voxels.h"
 
+#define ALLOW_DEBUG_VISUALS 1
 int oc_show_travel_depth = 0;
 int oc_detail_level = 0;
 
@@ -119,7 +120,7 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 		{
 			if ( parent->mat != 0 )
 			{
-				#if 0
+				#if ALLOW_DEBUG_VISUALS
 					fast_int level = s;
 					*out_m = ( oc_show_travel_depth ) ? ( (Material_ID) (level + 2) ) : parent->mat;
 				#else
