@@ -19,11 +19,11 @@
 #include "trimesh.h"
 #include "text.h"
 
-#define RENDER_RESOLUTION_DIV 2
-#define DEFAULT_RESX 640
-#define DEFAULT_RESY 480
+#define RENDER_RESOLUTION_DIV 1
+#define DEFAULT_RESX 800
+#define DEFAULT_RESY 600
 #define DEFAULT_OCTREE_DEPTH 9
-#define DEFAULT_THREADS 2
+#define DEFAULT_THREADS 6
 
 #define DEFAULT_FOV radians(65)
 #define FOV_INCR radians(5)
