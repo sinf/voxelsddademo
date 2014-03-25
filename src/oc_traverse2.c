@@ -72,7 +72,8 @@ static void process_leaf( const OctreeNode *node,
 	RayParams const rays[], 
 	uint8 alive[],
 	uint8 out_mat[],
-	float out_depth[] )
+	float out_depth[],
+	float *out_nor[3] )
 {
 	Material_ID mat = node->mat;
 	size_t r;
@@ -99,6 +100,12 @@ static void process_leaf( const OctreeNode *node,
 		out_mat[id] = mat;
 		out_depth[id] = z;
 		alive[id] = 0;
+		
+		if ( out_nor ) {
+			out_nor[0][id] = node->nor[0];
+			out_nor[1][id] = node->nor[1];
+			out_nor[2][id] = node->nor[2];
+		}
 	}
 }
 
@@ -109,7 +116,8 @@ static void traverse_branch( const OctreeNode *node,
 	uint8 const rec_mask[],
 	uint8 alive[],
 	uint8 out_mat[],
-	float out_depth[] )
+	float out_depth[],
+	float *out_nor[3] )
 {
 	RayParams *rays2 = (RayParams*) rays + ray_count; /* subset of current rays */
 	int iter;
@@ -128,9 +136,9 @@ static void traverse_branch( const OctreeNode *node,
 			if ( !rc2 )
 				continue;
 			if ( !octree_level || !child->children )
-				process_leaf( child, octree_level, rc2, rays2, alive, out_mat, out_depth );
+				process_leaf( child, octree_level, rc2, rays2, alive, out_mat, out_depth, out_nor );
 			else
-				traverse_branch( child, octree_level, rc2, rays2, rec_mask, alive, out_mat, out_depth );
+				traverse_branch( child, octree_level, rc2, rays2, rec_mask, alive, out_mat, out_depth, out_nor );
 		}
 	}
 }
@@ -140,7 +148,8 @@ void oc_traverse_dac( const Octree oc[1],
 	float const *ray_o[3],
 	float const *ray_d[3],
 	uint8 out_mat[],
-	float out_depth[] )
+	float out_depth[],
+	float *out_nor[3] )
 {
 	RayParams *params;
 	uint8 *rec_mask;
@@ -186,7 +195,7 @@ void oc_traverse_dac( const Octree oc[1],
 		out_depth[r] = FLT_MAX;
 	}
 	
-	traverse_branch( &oc->root, oc->root_level - oc_detail_level, ray_count, params, rec_mask, alive, out_mat, out_depth );
+	traverse_branch( &oc->root, oc->root_level - oc_detail_level, ray_count, params, rec_mask, alive, out_mat, out_depth, out_nor );
 	
 	free( params );
 }

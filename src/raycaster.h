@@ -11,6 +11,7 @@ extern Camera camera;
 extern uint8 *render_output_m;
 extern float *render_output_z;
 extern int enable_shadows;
+extern int show_normals;
 extern unsigned render_resx, render_resy;
 extern Material materials[NUM_MATERIALS];
 

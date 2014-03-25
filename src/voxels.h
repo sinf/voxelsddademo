@@ -16,6 +16,7 @@ typedef struct OctreeNode
 		For non-leaf nodes:
 			The most common (=mode) material in child nodes */
 	Material_ID mat;
+	float nor[3];
 } OctreeNode;
 
 typedef struct Octree
@@ -44,6 +45,6 @@ extern int oc_show_travel_depth; /* Replaces material with travel depth. Won't e
 extern int oc_detail_level; /* Maximum recursion level. Used for global LOD. Use 0 for full detail  */
 
 /* Ray traversal - used by raycaster.c and main.c */
-void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *output_mat, float *output_z );
+void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *output_mat, float *output_z, float *out_nor[3] );
 
 #endif

@@ -1,6 +1,6 @@
 #include <stdlib.h>
 
-static int traversal_func( const OctreeNode *parent, float tmin[3], float tmax[3], int level, unsigned rec_mask, Material_ID *out_m, float *out_z )
+static int traversal_func( const OctreeNode *parent, float tmin[3], float tmax[3], int level, unsigned rec_mask, Material_ID *out_m, float *out_z, float *out_nor[3] )
 {
 	float near = tmin[2];
 	float far = tmax[2];
@@ -52,7 +52,7 @@ static int traversal_func( const OctreeNode *parent, float tmin[3], float tmax[3
 				}
 			}
 			
-			if ( traversal_func( parent->children+k, a, b, level, rec_mask, out_m, out_z ) == 1 )
+			if ( traversal_func( parent->children+k, a, b, level, rec_mask, out_m, out_z, out_nor ) == 1 )
 				return 1;
 		}
 	}
@@ -60,13 +60,20 @@ static int traversal_func( const OctreeNode *parent, float tmin[3], float tmax[3
 	{
 		*out_z = near;
 		*out_m = ( oc_show_travel_depth ) ? ( (Material_ID) level + 2 ) : parent->mat;
+		
+		if ( out_nor ) {
+			*out_nor[0] = parent->nor[0];
+			*out_nor[1] = parent->nor[1];
+			*out_nor[2] = parent->nor[2];
+		}
+		
 		return 1;
 	}
 	
 	return 0;
 }
 
-void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *out_z )
+void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *out_z, float *out_nor[3] )
 {
 	int initial_level = oc->root_level; /* oc->root_level - max_recursion_level */
 	float size = oc->size;
@@ -93,5 +100,10 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 	
 	*out_m = 0;
 	*out_z = FLT_MAX;
-	traversal_func( &oc->root, tmin, tmax, initial_level, mask, out_m, out_z );
+	
+	if ( out_nor ) {
+		*out_nor[0] = *out_nor[1] = *out_nor[2] = 0;
+	}
+	
+	traversal_func( &oc->root, tmin, tmax, initial_level, mask, out_m, out_z, out_nor );
 }

@@ -17,10 +17,12 @@
 Octree *the_volume = NULL;
 Camera camera;
 
-uint8 *render_output_m = NULL;
-float *render_output_z = NULL;
+uint8 *render_output_m = NULL; /* materials */
+float *render_output_z = NULL; /* ray depth (distance to first intersection) */
+float *render_output_n[3] = {NULL,NULL,NULL}; /* surface normals. separate buffers for x,y,z components */
 static uint32 *render_output = NULL;
 int enable_shadows = 0;
+int show_normals = 0;
 Material materials[NUM_MATERIALS];
 
 static float screen_uv_scale[2];
@@ -68,6 +70,7 @@ void resize_render_output( int w, int h, uint32 *output_rgba )
 	size_t alignment = sizeof( __m128 );
 	double screen_ratio;
 	int nt = num_threads;
+	int k;
 	
 	stop_render_threads();
 	
@@ -77,11 +80,17 @@ void resize_render_output( int w, int h, uint32 *output_rgba )
 	
 	if ( render_output_m ) free( render_output_m );
 	if ( render_output_z ) free( render_output_z );
+	if ( render_output_n[0] ) {
+		free( render_output_n[0] );
+		free( render_output_n[1] );
+		free( render_output_n[2] );
+	}
 	if ( main_thread_ray_buffer ) free( main_thread_ray_buffer );
 	
 	if ( !total_pixels ) {
 		render_output_m = NULL;
 		render_output_z = NULL;
+		render_output_n[0] = render_output_n[1] = render_output_n[2] = NULL;
 		main_thread_ray_buffer = NULL;
 		return;
 	}
@@ -94,7 +103,11 @@ void resize_render_output( int w, int h, uint32 *output_rgba )
 	
 	render_output_m = aligned_alloc( alignment, total_pixels * sizeof render_output_m[0] );
 	render_output_z = aligned_alloc( alignment, total_pixels * sizeof render_output_z[0] );
+	
 	render_output = output_rgba;
+	
+	for( k=0; k<3; k++ )
+		render_output_n[k] = aligned_alloc( alignment, total_pixels * sizeof render_output_n[0][0] );
 	
 	if ( !nt )
 		main_thread_ray_buffer = aligned_alloc( alignment, total_pixels * 6 * sizeof( __m128 ) );
@@ -170,9 +183,13 @@ static void shade_pixels( size_t start_row, size_t end_row )
 	/*float *depth_p = render_output_z + seek;*/
 	uint8 *mat_p = render_output_m + seek;
 	uint32 *out_p = render_output + seek;
+	float *nx = render_output_n[0] + seek;
+	float *ny = render_output_n[1] + seek;
+	float *nz = render_output_n[2] + seek;
 	
 	for( y=start_row; y<end_row; y++ )
 	{
+		
 		/**
 		for( x=0; x<render_resx; x+=4 )
 		{
@@ -202,12 +219,27 @@ static void shade_pixels( size_t start_row, size_t end_row )
 			mat_p += 2;
 		}
 		**/
-		for( x=0; x<render_resx; x++,mat_p++,out_p++ )
-			*out_p = *(uint32*) materials[*mat_p].color;
+		if ( show_normals )
+		{
+			for( x=0; x<render_resx; x++,out_p++ ) {
+				int r = ( nx[x] + 1.0f ) * 127.5f;
+				int g = ( ny[x] + 1.0f ) * 127.5f;
+				int b = ( nz[x] + 1.0f ) * 127.5f;
+				*out_p = r | g << 8 | b << 16;
+			}
+			nx += render_resx;
+			ny += render_resx;
+			nz += render_resx;
+		}
+		else
+		{
+			for( x=0; x<render_resx; x++,mat_p++,out_p++ )
+				*out_p = *(uint32*) materials[*mat_p].color;
+		}
 	}
 }
 
-#if 1
+#if 0
 static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
 	const int use_dac_method = 0;
@@ -302,7 +334,7 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		mat_p = mat_p0;
 		depth_p = depth_p0;
 		
-		oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0 );
+		oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0, render_output_n );
 	}
 	else
 	{
@@ -313,6 +345,7 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			{
 				Ray ray;
 				Material_ID mat = 0;
+				float *nor_p[3];
 				
 				ray.o[0] = ray_ox[r];
 				ray.o[1] = ray_oy[r];
@@ -322,7 +355,11 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				ray.d[1] = ray_dy[r];
 				ray.d[2] = ray_dz[r];
 				
-				oc_traverse( the_volume, &ray, &mat, depth_p );
+				nor_p[0] = render_output_n[0] + r;
+				nor_p[1] = render_output_n[1] + r;
+				nor_p[2] = render_output_n[2] + r;
+				
+				oc_traverse( the_volume, &ray, &mat, depth_p, nor_p );
 				*mat_p++ = mat;
 				depth_p++;
 			}
@@ -394,7 +431,7 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			mat_p = mat_p0;
 			depth_p = depth_p0;
 			
-			oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
+			oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0, NULL );
 			mat_p = mat_p0;
 			
 			for( y=start_row; y<end_row; y++ )
@@ -437,7 +474,7 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 						ray.d[1] = ray_dy[r];
 						ray.d[2] = ray_dz[r];
 						
-						oc_traverse( the_volume, &ray, &m, &z );
+						oc_traverse( the_volume, &ray, &m, &z, NULL );
 						shadow_m[s] = m;
 					}
 					
@@ -453,6 +490,8 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 #else
 static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
+	size_t seek;
+	
 	vec3f ray_origin;
 	Ray ray;
 	size_t x, y;
@@ -463,6 +502,7 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	
 	uint8 *mat_p;
 	float *depth_p;
+	float *nor_p[3];
 	
 	(void) ray_buffer;
 	
@@ -478,8 +518,12 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	pixel_v_incr = screen_uv_scale[1];
 	
 	/* Initialize pixel pointers */
-	mat_p = render_output_m + start_row * render_resx;
-	depth_p = render_output_z + start_row * render_resx;
+	seek = start_row * render_resx;
+	mat_p = render_output_m + seek;
+	depth_p = render_output_z + seek;
+	nor_p[0] = render_output_n[0] + seek;
+	nor_p[1] = render_output_n[1] + seek;
+	nor_p[2] = render_output_n[2] + seek;
 	
 	for( y=start_row; y<end_row; y++ )
 	{
@@ -497,8 +541,12 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			normalize( ray.d );
 			multiply_vec_mat3f( ray.d, camera.eye_to_world, ray.d );
 			
-			oc_traverse( the_volume, &ray, &m, depth_p );
+			oc_traverse( the_volume, &ray, &m, depth_p, nor_p );
 			*mat_p = m;
+			
+			nor_p[0]++;
+			nor_p[1]++;
+			nor_p[2]++;
 			
 			#if 1
 			if ( enable_shadows )
@@ -521,7 +569,7 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				}
 				
 				normalize( ray.d );
-				oc_traverse( the_volume, &ray, &m, &z );
+				oc_traverse( the_volume, &ray, &m, &z, NULL );
 				
 				if ( m != 0 )
 					*mat_p |= 0x20;
