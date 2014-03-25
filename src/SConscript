@@ -8,7 +8,7 @@ env=Environment()
 env.ParseConfig( "sdl-config --libs --cflags" );
 env.ParseConfig( "pkg-config --libs --cflags glee" );
 env.Append( LIBPATH=["./loadbmp"] )
-env.Append( LIBS=Split("GLU GL loadbmp rt m pthread") )
+env.Append( LIBS=Split("loadbmp rt m pthread") )
 env.Append( CCFLAGS=Split(
 	"-Wall -Wextra -ansi -pedantic -pthread -march=native -msse -msse2"
 	" -g -O0"

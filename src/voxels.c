@@ -96,7 +96,7 @@ void get_node_bounds( aabb3f *bounds, const vec3i pos, int size )
 /* Chooses the most frequent (mode) material in children */
 Material_ID get_mode_material( OctreeNode *node )
 {
-	int count[N_MATERIALS] = {0};
+	int count[NUM_MATERIALS] = {0};
 	int freq, index;
 	int n;
 	
@@ -106,7 +106,7 @@ Material_ID get_mode_material( OctreeNode *node )
 	index = 0;
 	freq = 0;
 	
-	for( n=0; n<N_MATERIALS; n++ )
+	for( n=0; n<NUM_MATERIALS; n++ )
 	{
 		if ( count[n] >= freq )
 		{

@@ -17,36 +17,89 @@
 Octree *the_volume = NULL;
 Camera camera;
 
-Texture *render_output_m = NULL;
-Texture *render_output_z = NULL;
+uint8 *render_output_m = NULL;
+float *render_output_z = NULL;
+static uint32 *render_output = NULL;
 int enable_shadows = 0;
+Material materials[NUM_MATERIALS];
 
 static float screen_uv_scale[2];
 static float screen_uv_min[2];
+
+unsigned render_resx=0, render_resy=0;
+static unsigned total_pixels = 0;
+static float *main_thread_ray_buffer = NULL;
+
+/***** */
+typedef struct RenderThread
+{
+	int id;
+	int y0, y1; /* y coordinates that limit a part of the screen. y0 is inclusive, y1 is exclusive */
+	pthread_t thread;
+} RenderThread;
+
+#define MAX_RENDER_THREADS 32
+static RenderThread threads[MAX_RENDER_THREADS];
+static int num_threads = 0;
+
+static enum {
+	R_RENDER=0,
+	R_EXIT
+} render_state = R_RENDER;
+
+#define INITIAL_FRAME_ID 0
+static unsigned current_frame_id = INITIAL_FRAME_ID;
+
+static pthread_cond_t render_state_cond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t render_state_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int finished_parts = 0;
+static pthread_cond_t finished_parts_cond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t finished_parts_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* ******************* */
 
 static float calc_raydir_z( void )
 {
 	return fabsf( screen_uv_min[0] ) / tanf( camera.fovx * 0.5f );
 }
 
-void resize_render_output( int w, int h )
+void resize_render_output( int w, int h, uint32 *output_rgba )
 {
-	float screen_ratio;
+	size_t alignment = sizeof( __m128 );
+	double screen_ratio;
+	int nt = num_threads;
 	
-	w &= ~0xF; /* width needs to be a multiple of 16 */
+	stop_render_threads();
 	
-	screen_ratio = (float) w / (float) h;
+	render_resx = w & ~0xF; /* width needs to be a multiple of 16 */
+	render_resy = h;
+	total_pixels = render_resx * render_resy;
 	
-	screen_uv_min[0] = -0.5f;
-	screen_uv_scale[0] = 1.0f / w;
+	if ( render_output_m ) free( render_output_m );
+	if ( render_output_z ) free( render_output_z );
+	if ( main_thread_ray_buffer ) free( main_thread_ray_buffer );
 	
-	screen_uv_min[1] = 0.5f / screen_ratio;
-	screen_uv_scale[1] = -1.0f / h / screen_ratio;
+	if ( !total_pixels ) {
+		render_output_m = NULL;
+		render_output_z = NULL;
+		main_thread_ray_buffer = NULL;
+		return;
+	}
 	
-	delete_texture( render_output_m );
-	delete_texture( render_output_z );
-	render_output_m = alloc_texture( w, h, 1, TEX_BYTE, TEX_RECTANGLE );
-	render_output_z = alloc_texture( w, h, 1, TEX_FLOAT, TEX_RECTANGLE );
+	screen_ratio = render_resx / (double) render_resy;
+	screen_uv_min[0] = -0.5;
+	screen_uv_scale[0] = 1.0 / render_resx;
+	screen_uv_min[1] = 0.5 / screen_ratio;
+	screen_uv_scale[1] = -1.0 / render_resy / screen_ratio;
+	
+	render_output_m = aligned_alloc( alignment, total_pixels * sizeof render_output_m[0] );
+	render_output_z = aligned_alloc( alignment, total_pixels * sizeof render_output_z[0] );
+	render_output = output_rgba;
+	
+	if ( !nt )
+		main_thread_ray_buffer = aligned_alloc( alignment, total_pixels * 6 * sizeof( __m128 ) );
+	else
+		start_render_threads( nt );
 }
 
 void get_primary_ray( Ray *ray, const Camera *c, int x, int y )
@@ -110,18 +163,61 @@ static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_m
 	_mm_store_si128( mat_p, mat );
 }
 
+static void shade_pixels( size_t start_row, size_t end_row )
+{
+	size_t seek = start_row * render_resx;
+	size_t x, y;
+	/*float *depth_p = render_output_z + seek;*/
+	uint8 *mat_p = render_output_m + seek;
+	uint32 *out_p = render_output + seek;
+	
+	for( y=start_row; y<end_row; y++ )
+	{
+		/**
+		for( x=0; x<render_resx; x+=4 )
+		{
+			z = _mm_load_ps( depth_p );
+		}
+		
+		for( x=0; x<render_resx; x+=4 )
+		{
+			__m128 z;
+			__m128i c;
+			
+			z = _mm_loadl_ps( depth_p );
+			
+			
+			__m128i c = _mm_set_ps(
+				*(uint32*) materials[mat_p[0]].color,
+				*(uint32*) materials[mat_p[1]].color,
+				*(uint32*) materials[mat_p[2]].color,
+				*(uint32*) materials[mat_p[3]].color );
+			
+			
+			
+			*out_p = * (uint32*) materials[*mat_p].color;
+			
+			depth_p += 2;
+			out_p += 2;
+			mat_p += 2;
+		}
+		**/
+		for( x=0; x<render_resx; x++,mat_p++,out_p++ )
+			*out_p = *(uint32*) materials[*mat_p].color;
+	}
+}
+
 #if 1
-/* Starts rendering at start_row, skips every Nth row if row_incr > 1 */
-static void render_part( size_t start_row, size_t end_row )
+static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
 	const int use_dac_method = 0;
 	
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
 	__m128 ox, oy, oz;
 	size_t y, x, r;
-	size_t resx = render_output_m->w & ~3;
+	size_t resx = render_resx;
 	size_t resy = end_row - start_row;
-	size_t num_rays = ( resx * resy ) & ~3;
+	size_t num_rays = total_pixels;
 	
 	float u0f, duf;
 	__m128 u0, u, v, w, du, dv;
@@ -130,12 +226,14 @@ static void render_part( size_t start_row, size_t end_row )
 	float *depth_p, *depth_p0;
 	uint8 *mat_p, *mat_p0;
 	
-	ray_ox = aligned_alloc( sizeof( __m128 ), num_rays * 6 * sizeof( __m128 ) );
-	ray_oy = ray_ox + 4*num_rays;
-	ray_oz = ray_oy + 4*num_rays;
-	ray_dx = ray_oz + 4*num_rays;
-	ray_dy = ray_dx + 4*num_rays;
-	ray_dz = ray_dy + 4*num_rays;
+	size_t ray_attr_skip = 4 * resx * resy;
+	
+	ray_ox = ray_buffer;
+	ray_oy = ray_ox + ray_attr_skip;
+	ray_oz = ray_oy + ray_attr_skip;
+	ray_dx = ray_oz + ray_attr_skip;
+	ray_dy = ray_dx + ray_attr_skip;
+	ray_dz = ray_dy + ray_attr_skip;
 	
 	ox = _mm_set1_ps( camera.pos[0] * the_volume->size );
 	oy = _mm_set1_ps( camera.pos[1] * the_volume->size );
@@ -154,8 +252,8 @@ static void render_part( size_t start_row, size_t end_row )
 	}
 	
 	/* Initialize pixel pointers */
-	mat_p0 = render_output_m->data.u8 + start_row * render_output_m->w;
-	depth_p0 = render_output_z->data.f32 + start_row * render_output_z->w;
+	mat_p0 = render_output_m + start_row * render_resx;
+	depth_p0 = render_output_z + start_row * render_resx;
 	mat_p = mat_p0;
 	depth_p = depth_p0;
 	
@@ -350,15 +448,14 @@ static void render_part( size_t start_row, size_t end_row )
 		}
 	}
 	
-	free( ray_ox );
+	shade_pixels( start_row, end_row );
 }
 #else
-/* Starts rendering at start_row, skips every Nth row if row_incr > 1 */
-static void render_part( int start_row, int end_row )
+static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
 	vec3f ray_origin;
 	Ray ray;
-	int x, y;
+	size_t x, y;
 	
 	float pixel_w;
 	float pixel_u, pixel_v;
@@ -366,6 +463,8 @@ static void render_part( int start_row, int end_row )
 	
 	uint8 *mat_p;
 	float *depth_p;
+	
+	(void) ray_buffer;
 	
 	for( x=0; x<PADDED_VEC3_SIZE; x++ )
 	{
@@ -379,14 +478,14 @@ static void render_part( int start_row, int end_row )
 	pixel_v_incr = screen_uv_scale[1];
 	
 	/* Initialize pixel pointers */
-	mat_p = render_output_m->data.u8 + start_row * render_output_m->w;
-	depth_p = render_output_z->data.f32 + start_row * render_output_z->w;
+	mat_p = render_output_m + start_row * render_resx;
+	depth_p = render_output_z + start_row * render_resx;
 	
 	for( y=start_row; y<end_row; y++ )
 	{
 		pixel_u = screen_uv_min[0];
 		
-		for( x=0; x<render_output_m->w; x++ )
+		for( x=0; x<render_resx; x++ )
 		{
 			Material_ID m;
 			
@@ -435,34 +534,10 @@ static void render_part( int start_row, int end_row )
 		}
 		pixel_v += pixel_v_incr;
 	}
+	
+	shade_pixels( start_row, end_row );
 }
 #endif
-
-typedef struct RenderThread
-{
-	int id;
-	int y0, y1; /* y coordinates that limit a part of the screen. y0 is inclusive, y1 is exclusive */
-	pthread_t thread;
-} RenderThread;
-
-#define MAX_RENDER_THREADS 32
-static RenderThread threads[MAX_RENDER_THREADS];
-static int num_threads = 0;
-
-static enum {
-	R_RENDER=0,
-	R_EXIT
-} render_state = R_RENDER;
-
-#define INITIAL_FRAME_ID 0
-static unsigned current_frame_id = INITIAL_FRAME_ID;
-
-static pthread_cond_t render_state_cond = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t render_state_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-static int finished_parts = 0;
-static pthread_cond_t finished_parts_cond = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t finished_parts_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #if 0
 	#define SELF ( (unsigned) pthread_self() )
@@ -505,6 +580,22 @@ static void *render_thread_func( void *p )
 	int running = 1;
 	unsigned old_frame_id = INITIAL_FRAME_ID;
 	
+	size_t y0, y1, ray_buffer_size;
+	float *ray_buffer; /* temporary buffer for ray origins & directions */
+	
+	y0 = self->id * render_resy / num_threads;
+	y1 = ( self->id + 1 ) * render_resy / num_threads;
+	
+	printf( "Thread %d: Initializing.. got scanlines %u ... %u\n", self->id, (unsigned) y0, (unsigned) y1 );
+	
+	ray_buffer_size = sizeof( __m128 ) * 6 * ( y1 - y0 ) * render_resx;
+	ray_buffer = aligned_alloc( sizeof( __m128 ), ray_buffer_size );
+	
+	if ( !ray_buffer ) {
+		printf( "Error: Failed to allocate ray buffer (%u KiB)\n", (unsigned)(ray_buffer_size>>10) );
+		return NULL;
+	}
+	
 	while( running )
 	{
 		int s;
@@ -524,7 +615,7 @@ static void *render_thread_func( void *p )
 				if ( old_frame_id != current_frame_id )
 				{
 					/* Do some heavy number crunching and recursion */
-					render_part( self->y0, self->y1 );
+					render_part( self->y0, self->y1, ray_buffer );
 					old_frame_id = current_frame_id;
 					
 					/* Job finished - notify main thread */
@@ -545,6 +636,8 @@ static void *render_thread_func( void *p )
 		}
 	}
 	
+	free( ray_buffer );
+	printf( "Thread %d: I'm done\n", self->id );
 	return NULL;
 }
 
@@ -574,14 +667,14 @@ void start_render_threads( int count )
 {	
 	int n;
 	
-	if ( count <= 0 )
-		return;
-	
 	if ( num_threads > 0 )
 	{
 		/* Clear the old threads before creating new ones */
 		stop_render_threads();
 	}
+	
+	if ( count <= 0 )
+		return;
 	
 	num_threads = count;
 	render_state = R_RENDER;
@@ -589,35 +682,10 @@ void start_render_threads( int count )
 	finished_parts = 0;
 	
 	printf( "Starting renderer threads... (%d)\n", count );
-	for( n=0; n<num_threads; n++ )
-	{
+	for( n=0; n<num_threads; n++ ) {
 		threads[n].id = n;
-		threads[n].y0 = 1;
-		threads[n].y1 = 0;
 		pthread_create( &threads[n].thread, NULL, render_thread_func, threads+n );
 	}
-}
-
-static void assign_thread_parts( int resy )
-{
-	int y = 0;
-	int h = resy / num_threads;
-	int t;
-	for( t=0; t<num_threads; t++ )
-	{
-		int y0 = y;
-		int y1 = y + h;
-		
-		/*
-		printf( "Thread %d: rows %d-%d\n", t, y0, y1 );
-		*/
-		
-		threads[t].y0 = y0;
-		threads[t].y1 = y1;
-		
-		y = y1;
-	}
-	threads[t-1].y1 = resy;
 }
 
 void render_volume( void )
@@ -625,7 +693,7 @@ void render_volume( void )
 	if ( num_threads <= 0 )
 	{
 		/* Render alone */
-		render_part( 0, render_output_m->h );
+		render_part( 0, render_resy, main_thread_ray_buffer );
 	}
 	else
 	{
@@ -635,7 +703,6 @@ void render_volume( void )
 		/* Advance frame counter; causes worker threads to re-render */
 		pthread_mutex_lock( &render_state_mutex );
 		current_frame_id++;
-		assign_thread_parts( render_output_m->h );
 		pthread_cond_broadcast( &render_state_cond );
 		pthread_mutex_unlock( &render_state_mutex );
 		

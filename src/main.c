@@ -1,8 +1,6 @@
 #include <stdlib.h>
 #include <signal.h>
 #include "SDL.h"
-#include "opengl.h"
-#include "shader.h"
 
 #include "types.h"
 #include "vector.h"
@@ -16,12 +14,11 @@
 
 #include "camera.h"
 #include "raycaster.h"
-#include "trimesh.h"
 #include "text.h"
 
 #define RENDER_RESOLUTION_DIV 4
-#define DEFAULT_RESX 1024
-#define DEFAULT_RESY 768
+#define DEFAULT_RESX 640
+#define DEFAULT_RESY 480
 #define DEFAULT_OCTREE_DEPTH 9
 #define DEFAULT_THREADS 0
 
@@ -37,22 +34,12 @@
 static int brush_mat = BRUSH_DEFAULT_MAT;
 static float brush_radius = BRUSH_DEFAULT_RADIUS;
 
-static Trimesh *unit_cube = NULL;
-
-static Texture *font_texture = NULL;
-static Texture *material_texture = NULL;
-
-static GLuint gui_prog = 0;
-static GLuint polygon_prog = 0;
-static GLuint combine_prog = 0;
-
-static int screen_w = 0;
-static int screen_h = 0;
 static int mouse_x = 0;
 static int mouse_y = 0;
 
 static double millis_per_frame = 0;
-
+static int show_normals = 0;
+static SDL_Surface *screen = NULL;
 
 static void quit( /* any number of arguments */ )
 {
@@ -64,25 +51,22 @@ static void quit( /* any number of arguments */ )
 
 static void resize( int w, int h, int extra_flags )
 {
-	SDL_Surface *surf;
 	int flags;
 	
-	SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, 1 );
+	w &= ~0xF;
 	
-	flags = SDL_OPENGL;
+	flags = SDL_SWSURFACE;
 	flags |= SDL_RESIZABLE;
 	flags |= extra_flags;
-	surf = SDL_SetVideoMode( w, h, 0, flags );
+	screen = SDL_SetVideoMode( w, h, 32, flags );
 	
-	if ( !surf )
+	if ( !screen )
 	{
 		printf( "Failed to set %dx%d video mode, reason: %s\n", w, h, SDL_GetError() );
 		exit(0);
 	}
 	
-	screen_w = w;
-	screen_h = h;
-	glViewport( 0, 0, w, h );
+	resize_render_output( w, h, screen->pixels );
 }
 
 static void setup_test_scene( Octree *volume )
@@ -118,7 +102,7 @@ static void reset_camera( void )
 	camera.yaw = 0.0f;
 	camera.pitch = 0.0f;
 	
-	set_projection( &camera, DEFAULT_FOV, screen_w / (float) screen_h );
+	set_projection( &camera, DEFAULT_FOV, screen->w / (float) screen->h );
 	update_camera_matrix( &camera );
 }
 
@@ -129,8 +113,8 @@ static void shoot( int win_x, int win_y, Material_ID m )
 	float depth;
 	Ray ray;
 	
-	x = win_x / (float) screen_w * render_output_m->w;
-	y = win_y / (float) screen_h * render_output_m->h;
+	x = win_x / (float) screen->w * render_resx;
+	y = win_y / (float) screen->h * render_resy;
 	
 	get_primary_ray( &ray, &camera, x, y );
 	oc_traverse( the_volume, &ray, &mat, &depth );
@@ -247,282 +231,76 @@ float dot_product4( const vec3f a, const vec3f b )
 }
 #endif
 
-static void render( void )
+static void draw_ui_overlay( SDL_Surface *surf )
 {
-	glClear( GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT );
-	
-	#if 0
-	/* Test */
-	{
-		float ratio = (float) screen_w / (float) screen_h;
-		float fovy = camera.fovx / ratio;
-		
-		glMatrixMode( GL_PROJECTION );
-		glLoadIdentity();
-		gluPerspective( degrees(fovy), ratio, ZNEAR, ZFAR );
-		glScalef( 1.0, 1.0, -1.0 );
-		glMatrixMode( GL_MODELVIEW );
-		glLoadIdentity();
-		
-		glRotatef( degrees(camera.pitch), -1, 0, 0 );
-		glRotatef( degrees(camera.yaw), 0, -1, 0 );
-		
-		glTranslatef(
-			-camera.pos[0],
-			-camera.pos[1],
-			-camera.pos[2] );
-		
-		glEnable( GL_DEPTH_TEST );
-		glDepthFunc( GL_LEQUAL );
-		
-		#if 1
-		glBegin( GL_LINES );
-			glColor3ub( 255, 0, 0 );
-			glVertex3s( 0, 0, 0 );
-			glVertex3s( 1, 0, 0 );
-			glColor3ub( 0, 255, 0 );
-			glVertex3s( 0, 0, 0 );
-			glVertex3s( 0, 1, 0 );
-			glColor3ub( 0, 0, 255 );
-			glVertex3s( 0, 0, 0 );
-			glVertex3s( 0, 0, 1 );
-		glEnd();
-		#endif
-		
-		#if 0
-		glColor3ub( 255, 255, 255 );
-		/*glPolygonMode( GL_FRONT_AND_BACK, GL_LINE ); */
-		select_mesh( unit_cube );
-			glUseProgram( polygon_prog );
-				glUniform1f( glGetUniformLocation( combine_prog, "zNear" ), ZNEAR );
-				glUniform1f( glGetUniformLocation( combine_prog, "zFar" ), ZFAR );
-				draw_mesh();
-			glUseProgram( 0 );
-		select_mesh( NULL );
-		glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
-		#endif
-		
-		glDisable( GL_DEPTH_TEST );
-		glDepthFunc( GL_ALWAYS );
-		
-		/*
-		do_splat( the_volume, &camera );
-		*/
-	}
+	#if SHOW_HELP
+	draw_text( surf, 0, 0,
+		"Escape: quit\n"
+		"Q,W,E,A,S,D: Move camera\n"
+		"Space: Capture mouse\n"
+		"F1: Save\n"
+		"F2: Load\n"
+		"F3: Reset view\n"
+		"F4: Reset terrain\n"
+		"F5: Fullscreen\n"
+		"F6: Render mode\n"
+		"F7,F8: LOD\n"
+		"F9,F10: FOV\n"
+		"F11: Shadows\n" );
 	#endif
 	
-	#if 0
-	/* Stage 1: Rasterize triangles */
-	{
-		float modelview[16];
-		int n;
-		
-		for( n=0; n<3; n++ )
-		{
-			/* Inverse rotation */
-			memcpy( modelview+4*n, camera.eye_to_world+3*n, sizeof(float)*3 );
-			modelview[4*n+3] = 0.0f;
-		}
-		
-		/* Rotated translation */
-		modelview[12] = -dot_product( camera.world_to_eye, camera.pos );
-		modelview[13] = -dot_product( camera.world_to_eye+3, camera.pos );
-		modelview[14] = -dot_product( camera.world_to_eye+6, camera.pos );
-		
-		/* Scale */
-		modelview[15] = 1.0f;
-		
-		glMatrixMode( GL_PROJECTION );
-		glLoadMatrixf( camera.eye_to_view );
-		glMatrixMode( GL_MODELVIEW );
-		glLoadMatrixf( modelview );
-		
-		glColor3ub( 255, 0, 0 );
-		glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
-		select_mesh( unit_cube );
-			glUseProgram( polygon_prog );
-				glUniform1f( glGetUniformLocation( combine_prog, "zNear" ), ZNEAR );
-				glUniform1f( glGetUniformLocation( combine_prog, "zFar" ), ZFAR );
-				draw_mesh();
-			glUseProgram( 0 );
-		select_mesh( NULL );
-		glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
-		
-		glColor3ub( 255, 255, 255 );
-	}
-	#endif
-	
-	#if 1
-	/* Stage 2: Combine voxels + triangles. And shading */
-	{
-		render_volume();
-		
-		glActiveTexture( GL_TEXTURE2 );
-		glPixelTransferf( GL_RED_SCALE, 1.0f / the_volume->size );
-		upload_texture( render_output_z );
-		glBindTexture( render_output_z->gl_tex_target, render_output_z->gl_tex_id );
-		glPixelTransferf( GL_RED_SCALE, 1.0f );
-		
-		glActiveTexture( GL_TEXTURE1 );
-		glBindTexture( material_texture->gl_tex_target, material_texture->gl_tex_id );
-		
-		glActiveTexture( GL_TEXTURE0 );
-		upload_texture( render_output_m );
-		glBindTexture( render_output_m->gl_tex_target, render_output_m->gl_tex_id );
-		
-		glEnable( GL_DEPTH_TEST );
-		glDepthFunc( GL_LEQUAL );
-		
-		glUseProgram( combine_prog );
-		{
-			GLint verts[4*2];
-			float fov[2];
-			int res[2];
-			
-			res[0] = screen_w / RENDER_RESOLUTION_DIV;
-			res[1] = screen_h / RENDER_RESOLUTION_DIV;
-			glUniform2iv( glGetUniformLocation( combine_prog, "tex_resolution" ), 1, res );
-			
-			res[0] = screen_w;
-			res[1] = screen_h;
-			glUniform2iv( glGetUniformLocation( combine_prog, "resolution" ), 1, res );
-			
-			fov[0] = camera.fovx;
-			fov[1] = screen_h / (float) screen_w * fov[0];
-			glUniform2fv( glGetUniformLocation( combine_prog, "fov" ), 1, fov );
-			
-			glUniform1f( glGetUniformLocation( combine_prog, "zNear" ), ZNEAR );
-			glUniform1f( glGetUniformLocation( combine_prog, "zFar" ), ZFAR );
-			
-			/*
-			glUniformMatrix3fv( glGetUniformLocation( combine_prog, "eye_to_world" ), 1, GL_FALSE, camera.eye_to_world );
-			glUniformMatrix3fv( glGetUniformLocation( combine_prog, "world_to_eye" ), 1, GL_FALSE, camera.world_to_eye );
-			glUniformMatrix4fv( glGetUniformLocation( combine_prog, "eye_to_ndc" ), 1, GL_FALSE, camera.eye_to_ndc );
-			*/
-			
-			verts[0] = verts[1] = verts[3] = verts[6] = 0;
-			verts[2] = verts[4] = screen_w;
-			verts[5] = verts[7] = screen_h;
-			
-			/* Draw a screen aligned quad */
-			glEnableClientState( GL_VERTEX_ARRAY );
-			glVertexPointer( 2, GL_INT, 0, verts );
-			glDrawArrays( GL_QUADS, 0, 4 );
-			glDisableClientState( GL_VERTEX_ARRAY );
-		}
-		glUseProgram( 0 );
-		
-		glActiveTexture( GL_TEXTURE2 );
-		glBindTexture( render_output_z->gl_tex_target, 0 );
-		glActiveTexture( GL_TEXTURE1 );
-		glBindTexture( material_texture->gl_tex_target, 0 );
-		glActiveTexture( GL_TEXTURE0 );
-		glBindTexture( render_output_m->gl_tex_target, 0 );
-		
-		glDisable( GL_DEPTH_TEST );
-	}
-	#endif
-	
-	#if 1
-	/* Stage 3: 2D overlay */
-	glUseProgram( gui_prog );
-	{
-		int res[2];
-		res[0] = screen_w;
-		res[1] = screen_h;
-		glUniform2iv( glGetUniformLocation( gui_prog, "resolution" ), 1, res );
-		
-		glActiveTexture( GL_TEXTURE0 );
-		glBindTexture( font_texture->gl_tex_target, font_texture->gl_tex_id );
-		
-		#if SHOW_HELP
-		draw_text( 0, 0,
-			"Escape: quit\n"
-			"Q,W,E,A,S,D: Move camera\n"
-			"Space: Capture mouse\n"
-			"F1: Save\n"
-			"F2: Load\n"
-			"F3: Reset view\n"
-			"F4: Reset terrain\n"
-			"F5: Fullscreen\n"
-			"F6: Render mode\n"
-			"F7,F8: LOD\n"
-			"F9,F10: FOV\n"
-			"F11: Shadows\n" );
-		#endif
-		
-		draw_text_f( 0, screen_h - 4*GLYPH_H,
-			"Mat=%d\n"
-			"%d ms\n"
-			"Depth: %d/%d\n"
-			"Nodes: %u\n"
-			"Resolution: %d^3\n",
-			brush_mat,
-			(int) millis_per_frame,
-			the_volume->root_level - oc_detail_level, the_volume->root_level,
-			the_volume->num_nodes,
-			the_volume->size );
-		
-		glBindTexture( font_texture->gl_tex_target, 0 );
-	}
-	glUseProgram( 0 );
-	#endif
+	draw_text_f( surf,
+		0, surf->h - 4*GLYPH_H,
+		"Mat=%d\n"
+		"%d ms\n"
+		"Depth: %d/%d\n"
+		"Nodes: %u\n"
+		"Resolution: %d^3\n",
+		brush_mat,
+		(int) millis_per_frame,
+		the_volume->root_level - oc_detail_level, the_volume->root_level,
+		the_volume->num_nodes,
+		the_volume->size );
 }
 
-static void init_GL( void )
+static void render( SDL_Surface *surf )
 {
-	GLuint vs_projection, vs_2D;
-	GLuint fs_combine, fs_tex;
+	render_volume();
+	draw_ui_overlay( surf );
+}
+
+static void load_materials( void )
+{
+	SDL_Surface *s;
+	int x, y, n, m;
 	
-	glClearDepth( 1.0f );
-	glDisable( GL_DEPTH_TEST );
+	printf( "Loading materials...\n" );
+	s = SDL_LoadBMP( "data/materials.bmp" );
+	if ( !s )
+		return;
 	
-	glShadeModel( GL_FLAT );
-	glDisable( GL_LIGHTING );
-	glDisable( GL_LIGHT0 );
+	n = ( s->pitch * s->h / 4 ) & 0xFF;
+	SDL_LockSurface( s );
 	
-	material_texture = load_texture( "data/materials.bmp", TEX_RECTANGLE );
-	upload_texture( material_texture );
+	for( m=y=0; y<s->h; y++ )
+	{
+		for( x=0; x<s->w; x++,m++ )
+		{
+			uint32 pixel = *(uint32*)( (uint8*) s->pixels + s->format->BytesPerPixel * x + s->pitch * y );
+			SDL_GetRGB( pixel, s->format, &materials[m].color[2], &materials[m].color[1], &materials[m].color[0] );
+			materials[m].color[3] = 0xFF; /* opacity */
+			if ( m == n )
+				break;
+		}
+		if ( m == n )
+			break;
+	}
 	
-	/* Use the very first material color as the background color */
-	glClearColor(
-		material_texture->data.u8[0] / 255.0,
-		material_texture->data.u8[1] / 255.0,
-		material_texture->data.u8[2] / 255.0, 0.0 );
+	materials[0].color[3] = 0;
 	
-	/* Texturing units:
-		0: Material indexes
-		1: Material table (initialized only once)
-		2: Linear Z buffer in eye space
-	It is OK if the hardware doesn't support 3 textures
-	since only the Z buffer based shading gets dropped.
-	*/
-	
-	/* Load and compile some shaders */
-	
-	vs_projection = compile_shader( "data/projection.vert", GL_VERTEX_SHADER );
-	vs_2D = compile_shader( "data/2d.vert", GL_VERTEX_SHADER );
-	fs_tex = compile_shader( "data/textured.frag", GL_FRAGMENT_SHADER );
-	fs_combine = compile_shader( "data/combine.frag", GL_FRAGMENT_SHADER );
-	
-	gui_prog = create_shader_program( vs_2D, fs_tex );
-	polygon_prog = create_shader_program( vs_projection, 0 );
-	combine_prog = create_shader_program( vs_2D, fs_combine );
-	
-	glUseProgram( gui_prog );
-		glUniform1i( glGetUniformLocation( gui_prog, "colormap" ), 0 );
-	glUseProgram( polygon_prog );
-		glUniform1i( glGetUniformLocation( polygon_prog, "colormap" ), 0 );
-	glUseProgram( combine_prog );
-		glUniform1i( glGetUniformLocation( combine_prog, "input_mat_table" ), 1 );
-		glUniform1i( glGetUniformLocation( combine_prog, "input_tex_m" ), 0 );
-		glUniform1i( glGetUniformLocation( combine_prog, "input_tex_z" ), 2 );
-	glUseProgram( 0 );
-	
-	unit_cube = load_wavefront_obj( "data/cube.obj" );
-	
-	font_texture = load_texture( "data/le_font.bmp", 0 );
-	upload_texture( font_texture );
+	SDL_UnlockSurface( s );
+	SDL_FreeSurface( s );
+	printf( "Ok\n" );
 }
 
 int main( int argc, char **argv )
@@ -552,10 +330,10 @@ int main( int argc, char **argv )
 	}
 	
 	signal( SIGINT, quit );
+	load_materials();
 	resize( resx, resy, 0 );
-	resize_render_output( resx / RENDER_RESOLUTION_DIV, resy / RENDER_RESOLUTION_DIV );
 	
-	printf( "Render resolution: %dx%d (%dx%d)\n", resx, resy, render_output_m->w, render_output_m->h );
+	printf( "Render resolution: %dx%d (%dx%d)\n", resx, resy, render_resx, render_resy );
 	printf( "Rendering threads: %d\n", n_threads );
 	printf( "Max octree depth: %d\n", max_octree_depth );
 	printf( "Max voxel resolution: %d\n", 1 << max_octree_depth );
@@ -564,7 +342,9 @@ int main( int argc, char **argv )
 	setup_test_scene( the_volume );
 	printf( "Generated initial octree nodes: %u\n", the_volume->num_nodes );
 	
-	init_GL();
+	if ( !load_font() )
+		printf( "Warning: failed to load font: %s\n", SDL_GetError() );
+	
 	reset_camera();
 	
 	if ( n_threads > 0 )
@@ -661,27 +441,24 @@ int main( int argc, char **argv )
 								vflags &= ~SDL_FULLSCREEN;
 							else
 								vflags |= SDL_FULLSCREEN;
-							resize( screen_w, screen_h, vflags );
+							resize( screen->w, screen->h, vflags );
 							break;
 						
 						case SDLK_F6:
 							{
 								static int mode = 0;
-								GLint loc;
-								glUseProgram( combine_prog );
-								loc = glGetUniformLocation( combine_prog, "show_normals" );
 								switch( ++mode )
 								{
 									case 2:
 										/* Show eye space normals */
 										oc_show_travel_depth = 0;
-										glUniform1i( loc, 1 );
+										show_normals = 1;
 										break;
 									
 									case 1:
 										/* Visualize octree depth */
 										oc_show_travel_depth = 1;
-										glUniform1i( loc, 0 );
+										show_normals = 0;
 										break;
 									
 									default:
@@ -690,10 +467,9 @@ int main( int argc, char **argv )
 									case 0:
 										/* Show shaded materials */
 										oc_show_travel_depth = 0;
-										glUniform1i( loc, 0 );
+										show_normals = 0;
 										break;
 								}
-								glUseProgram( 0 );
 							}
 							break;
 						
@@ -710,11 +486,11 @@ int main( int argc, char **argv )
 							break;
 						
 						case SDLK_F9:
-							set_projection( &camera, camera.fovx + FOV_INCR, screen_w / (float) screen_h );
+							set_projection( &camera, camera.fovx + FOV_INCR, screen->w / (float) screen->h );
 							break;
 						
 						case SDLK_F10:
-							set_projection( &camera, camera.fovx - FOV_INCR, screen_w / (float) screen_h );
+							set_projection( &camera, camera.fovx - FOV_INCR, screen->w / (float) screen->h );
 							break;
 						
 						case SDLK_F11:
@@ -726,8 +502,8 @@ int main( int argc, char **argv )
 							hook_mouse = !hook_mouse;
 							if ( hook_mouse )
 							{
-								mouse_x = screen_w >> 1;
-								mouse_y = screen_h >> 1;
+								mouse_x = screen->w >> 1;
+								mouse_y = screen->h >> 1;
 								SDL_WarpMouse( mouse_x, mouse_y );
 							}
 							break;
@@ -750,7 +526,7 @@ int main( int argc, char **argv )
 						brush_mat += 1;
 					else if ( event.button.button == SDL_BUTTON_WHEELDOWN )
 						brush_mat -= 1;
-					brush_mat = clamp( brush_mat, 1, N_MATERIALS - 1 );
+					brush_mat = clamp( brush_mat, 1, NUM_MATERIALS - 1 );
 					break;
 				
 				default:
@@ -758,9 +534,9 @@ int main( int argc, char **argv )
 			}
 		}
 		
-		process_input( screen_w >> 1, screen_h >> 1 );
-		render();
-		SDL_GL_SwapBuffers();
+		process_input( screen->w >> 1, screen->h >> 1 );
+		render( screen );
+		SDL_Flip( screen );
 		
 		millis_per_frame = 
 			0.75 * millis_per_frame
