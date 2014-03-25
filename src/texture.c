@@ -1,3 +1,4 @@
+#include <emmintrin.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,7 +42,7 @@ Texture *alloc_texture( int w, int h, int num_channels, TextureFormat fmt, int f
 	tex->h = h;
 	tex->channels = num_channels;
 	tex->fmt = fmt;
-	tex->data.u8 = calloc( w * h, num_channels * channel_size );
+	tex->data.u8 = aligned_alloc( sizeof( __m128 ), w * h * num_channels * channel_size );
 	tex->flags = flags;
 	
 	tex->gl_tex_id = 0;
