@@ -8,14 +8,14 @@
 int oc_show_travel_depth = 0;
 int oc_detail_level = 0;
 
-#if 1
+#if 0
 #include "octree_traversal_test.h"
 #else
 
 typedef int fast_int;
 typedef unsigned fast_uint;
 
-void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *out_z )
+void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *out_z, float *out_nor[3] )
 {
 	struct {
 		const OctreeNode *node;
@@ -131,6 +131,13 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 				#endif
 				
 				*out_z = near;
+				
+				if ( out_nor ) {
+					*out_nor[0] = parent->nor[0];
+					*out_nor[1] = parent->nor[1];
+					*out_nor[2] = parent->nor[2];
+				}
+				
 				return;
 			}
 			
@@ -140,6 +147,10 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 	
 	*out_m = 0;
 	*out_z = FLT_MAX;
+	
+	if ( out_nor ) {
+		*out_nor[0] = *out_nor[1] = *out_nor[2] = 0;
+	}
 }
 
 #endif

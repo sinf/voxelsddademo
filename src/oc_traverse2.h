@@ -10,6 +10,7 @@ void oc_traverse_dac( const Octree oc[1],
 	float const *ray_o[3],
 	float const *ray_d[3],
 	uint8 out_mat[],
-	float out_depth[] );
+	float out_depth[],
+	float *out_nor[3] );
 
 #endif

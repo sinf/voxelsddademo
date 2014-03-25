@@ -16,9 +16,9 @@
 #include "raycaster.h"
 #include "text.h"
 
-#define RENDER_RESOLUTION_DIV 4
-#define DEFAULT_RESX 640
-#define DEFAULT_RESY 480
+#define RENDER_RESOLUTION_DIV 1
+#define DEFAULT_RESX 320
+#define DEFAULT_RESY 240
 #define DEFAULT_OCTREE_DEPTH 9
 #define DEFAULT_THREADS 0
 
@@ -29,7 +29,7 @@
 #define BRUSH_DEFAULT_RADIUS 1.4
 #define BRUSH_DEFAULT_MAT 15
 
-#define SHOW_HELP 1
+#define SHOW_HELP 0
 
 static int brush_mat = BRUSH_DEFAULT_MAT;
 static float brush_radius = BRUSH_DEFAULT_RADIUS;
@@ -38,7 +38,6 @@ static int mouse_x = 0;
 static int mouse_y = 0;
 
 static double millis_per_frame = 0;
-static int show_normals = 0;
 static SDL_Surface *screen = NULL;
 
 static void quit( /* any number of arguments */ )
@@ -117,7 +116,7 @@ static void shoot( int win_x, int win_y, Material_ID m )
 	y = win_y / (float) screen->h * render_resy;
 	
 	get_primary_ray( &ray, &camera, x, y );
-	oc_traverse( the_volume, &ray, &mat, &depth );
+	oc_traverse( the_volume, &ray, &mat, &depth, NULL );
 	
 	if ( mat != 0 )
 	{
@@ -233,6 +232,9 @@ float dot_product4( const vec3f a, const vec3f b )
 
 static void draw_ui_overlay( SDL_Surface *surf )
 {
+	if ( surf->w < 200 || surf->h < 200 )
+		return;
+	
 	#if SHOW_HELP
 	draw_text( surf, 0, 0,
 		"Escape: quit\n"
@@ -340,7 +342,7 @@ int main( int argc, char **argv )
 	
 	the_volume = oc_init( max_octree_depth );
 	setup_test_scene( the_volume );
-	printf( "Generated initial octree nodes: %u\n", the_volume->num_nodes );
+	printf( "Initial octree nodes: %u\n", the_volume->num_nodes );
 	
 	if ( !load_font() )
 		printf( "Warning: failed to load font: %s\n", SDL_GetError() );
