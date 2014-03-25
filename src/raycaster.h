@@ -2,18 +2,20 @@
 #ifndef _RAYCASTER_H
 #define _RAYCASTER_H
 
-#include "texture.h"
 #include "camera.h"
 #include "voxels.h"
+#include "materials.h"
 
 extern Octree *the_volume;
 extern Camera camera;
-extern Texture *render_output_m;
-extern Texture *render_output_z;
+extern uint8 *render_output_m;
+extern float *render_output_z;
 extern int enable_shadows;
+extern unsigned render_resx, render_resy;
+extern Material materials[NUM_MATERIALS];
 
 /* Resizes render_output_... and cleans up the previous stuff. */
-void resize_render_output( int w, int h );
+void resize_render_output( int w, int h, uint32 *output_rgba );
 
 /* Starts N threads that are used for rendering.
 	Any previous threads will be stopped and cleaned up.
