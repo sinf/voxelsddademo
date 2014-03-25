@@ -4,10 +4,13 @@
 #include "voxels.h"
 
 #define ALLOW_DEBUG_VISUALS 1
+#define OCTREE_DEPTH_HARDLIMIT 30
 int oc_show_travel_depth = 0;
 int oc_detail_level = 0;
 
-#define OCTREE_DEPTH_HARDLIMIT 30
+#if 1
+#include "octree_traversal_test.h"
+#else
 
 typedef int fast_int;
 typedef unsigned fast_uint;
@@ -138,3 +141,5 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 	*out_m = 0;
 	*out_z = FLT_MAX;
 }
+
+#endif

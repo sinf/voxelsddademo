@@ -1,6 +1,6 @@
 #include <stdlib.h>
 
-static int traversal_func( OctreeNode *parent, float tmin[3], float tmax[3], int level, unsigned rec_mask, Material_ID *out_m, float *out_z )
+static int traversal_func( const OctreeNode *parent, float tmin[3], float tmax[3], int level, unsigned rec_mask, Material_ID *out_m, float *out_z )
 {
 	float near = tmin[2];
 	float far = tmax[2];
@@ -66,8 +66,9 @@ static int traversal_func( OctreeNode *parent, float tmin[3], float tmax[3], int
 	return 0;
 }
 
-void oc_traverse( Octree *oc, Ray *ray, int max_recursion_level, Material_ID *out_m, float *out_z )
+void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *out_z )
 {
+	int initial_level = oc->root_level; /* oc->root_level - max_recursion_level */
 	float size = oc->size;
 	float tmin[3], tmax[3];
 	int n;
@@ -92,5 +93,5 @@ void oc_traverse( Octree *oc, Ray *ray, int max_recursion_level, Material_ID *ou
 	
 	*out_m = 0;
 	*out_z = FLT_MAX;
-	traversal_func( &oc->root, tmin, tmax, oc->root_level - max_recursion_level, mask, out_m, out_z );
+	traversal_func( &oc->root, tmin, tmax, initial_level, mask, out_m, out_z );
 }
