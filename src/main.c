@@ -534,18 +534,22 @@ int main( int argc, char **argv )
 		
 		process_input( screen->w >> 1, screen->h >> 1 );
 		
+		SDL_FillRect( screen, NULL, 0 );
 		begin_volume_rendering();
-		SDL_Delay( 2 );
+		/* SDL_Delay( 2 ); */
 		end_volume_rendering();
 		draw_ui_overlay( screen );
 		SDL_Flip( screen );
 		
+		millis_per_frame = ( SDL_GetTicks() - loop_start_time );
+		
+		#if 0
 		millis_per_frame = 
 			0.75 * millis_per_frame
 			+ 0.25 * ( SDL_GetTicks() - loop_start_time );
-		
 		if ( millis_per_frame < 20.0 )
 			SDL_Delay( 20 - millis_per_frame );
+		#endif
 	}
 	
 	quit();

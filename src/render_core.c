@@ -120,7 +120,12 @@ static void normalize_vec( __m128 *x, __m128 *y, __m128 *z )
 	yy = _mm_mul_ps( *y, *y );
 	zz = _mm_mul_ps( *z, *z );
 	sq = _mm_add_ps( xx, _mm_add_ps( yy, zz ) );
+#if 0
+	/* Much less accuracy, slightly faster */
+	inv_sq = _mm_rsqrt_ps( sq );
+#else
 	inv_sq = _mm_div_ps( _mm_load_ps( one ), _mm_sqrt_ps( sq ) );
+#endif
 	*x = _mm_mul_ps( *x, inv_sq );
 	*y = _mm_mul_ps( *y, inv_sq );
 	*z = _mm_mul_ps( *z, inv_sq );
@@ -203,33 +208,20 @@ static void shade_pixels( size_t start_row, size_t end_row )
 	}
 }
 
+#define ENABLE_RAY_CAST 1
 #if 1
-void render_part( size_t start_row, size_t end_row, float *ray_buffer )
+static void generate_primary_rays(
+	size_t resx,
+	size_t start_row,
+	size_t end_row,
+	float *ray_ox, float *ray_oy, float *ray_oz,
+	float *ray_dx, float *ray_dy, float *ray_dz )
 {
-	const int use_dac_method = 0;
-	
-	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
-	__m128 ox, oy, oz;
-	size_t y, x, r;
-	size_t resx = render_resx;
-	size_t resy = end_row - start_row;
-	size_t num_rays = total_pixels;
-	
 	float u0f, duf;
 	__m128 u0, u, v, w, du, dv;
 	__m128 mvp[9];
-	
-	float *depth_p, *depth_p0;
-	uint8 *mat_p, *mat_p0;
-	
-	size_t ray_attr_skip = resx * resy;
-	
-	ray_ox = ray_buffer;
-	ray_oy = ray_ox + ray_attr_skip;
-	ray_oz = ray_oy + ray_attr_skip;
-	ray_dx = ray_oz + ray_attr_skip;
-	ray_dy = ray_dx + ray_attr_skip;
-	ray_dz = ray_dy + ray_attr_skip;
+	size_t r, y, x;
+	__m128 ox, oy, oz;
 	
 	ox = _mm_set1_ps( camera.pos[0] * the_volume->size );
 	oy = _mm_set1_ps( camera.pos[1] * the_volume->size );
@@ -247,13 +239,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		mvp[x] = _mm_set1_ps( camera.eye_to_world[x] );
 	}
 	
-	/* Initialize pixel pointers */
-	mat_p0 = render_output_m + start_row * render_resx;
-	depth_p0 = render_output_z + start_row * render_resx;
-	mat_p = mat_p0;
-	depth_p = depth_p0;
-	
-	/* Generate primary rays */
 	for( r=0,y=start_row; y<end_row; y++ )
 	{
 		u = u0;
@@ -282,7 +267,39 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		}
 		v = _mm_add_ps( v, dv );
 	}
+}
+void render_part( size_t start_row, size_t end_row, float *ray_buffer )
+{
+	const int use_dac_method = 0;
 	
+	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
+	__m128 ox, oy, oz;
+	size_t y, x, r;
+	size_t resx = render_resx;
+	size_t resy = end_row - start_row;
+	size_t num_rays = total_pixels;
+	
+	float *depth_p, *depth_p0;
+	uint8 *mat_p, *mat_p0;
+	
+	size_t ray_attr_skip = resx * resy;
+	
+	ray_ox = ray_buffer;
+	ray_oy = ray_ox + ray_attr_skip;
+	ray_oz = ray_oy + ray_attr_skip;
+	ray_dx = ray_oz + ray_attr_skip;
+	ray_dy = ray_dx + ray_attr_skip;
+	ray_dz = ray_dy + ray_attr_skip;
+	
+	/* Initialize pixel pointers */
+	mat_p0 = render_output_m + start_row * render_resx;
+	depth_p0 = render_output_z + start_row * render_resx;
+	mat_p = mat_p0;
+	depth_p = depth_p0;
+	
+	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz );
+	
+	#if ENABLE_RAY_CAST
 	if ( use_dac_method )
 	{
 		const float *o[3], *d[3];
@@ -324,12 +341,12 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				nor_p[2] = render_output_n[2] + r;
 				
 				oc_traverse( the_volume, &ray, &mat, depth_p, nor_p );
+				
 				*mat_p++ = mat;
 				depth_p++;
 			}
 		}
 	}
-	
 	if ( enable_shadows )
 	{
 		__m128 lx, ly, lz, dx, dy, dz, depth;
@@ -448,6 +465,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			}
 		}
 	}
+	#endif
 	
 	shade_pixels( start_row, end_row );
 }
@@ -505,14 +523,17 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			normalize( ray.d );
 			multiply_vec_mat3f( ray.d, camera.eye_to_world, ray.d );
 			
+			#if ENABLE_RAY_CAST
 			oc_traverse( the_volume, &ray, &m, depth_p, nor_p );
+			#endif
+			
 			*mat_p = m;
 			
 			nor_p[0]++;
 			nor_p[1]++;
 			nor_p[2]++;
 			
-			#if 1
+			#if ENABLE_RAY_CAST
 			if ( enable_shadows )
 			{
 				/* Shadow ray */
