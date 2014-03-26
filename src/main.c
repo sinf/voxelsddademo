@@ -21,7 +21,7 @@
 #define DEFAULT_RESX 320
 #define DEFAULT_RESY 240
 #define DEFAULT_OCTREE_DEPTH 9
-#define DEFAULT_THREADS 2
+#define DEFAULT_THREADS 6
 
 #define DEFAULT_FOV radians(65)
 #define FOV_INCR radians(5)
