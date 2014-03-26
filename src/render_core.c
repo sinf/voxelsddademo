@@ -1,64 +1,32 @@
 #include <xmmintrin.h>
 #include <emmintrin.h>
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-
-#include <pthread.h>
 #include <unistd.h>
-#include <sys/time.h>
-#include <time.h>
-
-#include "raycaster.h"
-
 #include "oc_traverse2.h"
+#include "render_core.h"
+#include "render_threads.h"
 
 Octree *the_volume = NULL;
 Camera camera;
 
-uint8 *render_output_m = NULL; /* materials */
-float *render_output_z = NULL; /* ray depth (distance to first intersection) */
-float *render_output_n[3] = {NULL,NULL,NULL}; /* surface normals. separate buffers for x,y,z components */
+static uint8 *render_output_m = NULL; /* materials */
+static float *render_output_z = NULL; /* ray depth (distance to first intersection) */
+static float *render_output_n[3] = {NULL,NULL,NULL}; /* surface normals. separate buffers for x,y,z components */
 static uint32 *render_output = NULL;
-int enable_shadows = 0;
-int show_normals = 0;
+
 Material materials[NUM_MATERIALS];
+
+volatile int enable_shadows = 0;
+volatile int show_normals = 0;
 
 static float screen_uv_scale[2];
 static float screen_uv_min[2];
 
-unsigned render_resx=0, render_resy=0;
-static unsigned total_pixels = 0;
+size_t render_resx=0, render_resy=0;
+static size_t total_pixels = 0;
 static float *main_thread_ray_buffer = NULL;
-
-/***** */
-typedef struct RenderThread
-{
-	int id;
-	int y0, y1; /* y coordinates that limit a part of the screen. y0 is inclusive, y1 is exclusive */
-	pthread_t thread;
-} RenderThread;
-
-#define MAX_RENDER_THREADS 32
-static RenderThread threads[MAX_RENDER_THREADS];
-static int num_threads = 0;
-
-static enum {
-	R_RENDER=0,
-	R_EXIT
-} render_state = R_RENDER;
-
-#define INITIAL_FRAME_ID 0
-static unsigned current_frame_id = INITIAL_FRAME_ID;
-
-static pthread_cond_t render_state_cond = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t render_state_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-static int finished_parts = 0;
-static pthread_cond_t finished_parts_cond = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t finished_parts_mutex = PTHREAD_MUTEX_INITIALIZER;
-/* ******************* */
 
 static float calc_raydir_z( void )
 {
@@ -67,11 +35,12 @@ static float calc_raydir_z( void )
 
 void resize_render_output( int w, int h, uint32 *output_rgba )
 {
-	size_t alignment = sizeof( __m128 );
+	size_t alignment = 16;
 	double screen_ratio;
-	int nt = num_threads;
+	const int nt = num_render_threads;
 	int k;
 	
+	render_output = output_rgba;
 	stop_render_threads();
 	
 	render_resx = w & ~0xF; /* width needs to be a multiple of 16 */
@@ -104,15 +73,10 @@ void resize_render_output( int w, int h, uint32 *output_rgba )
 	render_output_m = aligned_alloc( alignment, total_pixels * sizeof render_output_m[0] );
 	render_output_z = aligned_alloc( alignment, total_pixels * sizeof render_output_z[0] );
 	
-	render_output = output_rgba;
-	
 	for( k=0; k<3; k++ )
 		render_output_n[k] = aligned_alloc( alignment, total_pixels * sizeof render_output_n[0][0] );
 	
-	if ( !nt )
-		main_thread_ray_buffer = aligned_alloc( alignment, total_pixels * 6 * sizeof( __m128 ) );
-	else
-		start_render_threads( nt );
+	start_render_threads( nt );
 }
 
 void get_primary_ray( Ray *ray, const Camera *c, int x, int y )
@@ -239,8 +203,8 @@ static void shade_pixels( size_t start_row, size_t end_row )
 	}
 }
 
-#if 0
-static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
+#if 1
+void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
 	const int use_dac_method = 0;
 	
@@ -258,7 +222,7 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	float *depth_p, *depth_p0;
 	uint8 *mat_p, *mat_p0;
 	
-	size_t ray_attr_skip = 4 * resx * resy;
+	size_t ray_attr_skip = resx * resy;
 	
 	ray_ox = ray_buffer;
 	ray_oy = ray_ox + ray_attr_skip;
@@ -488,7 +452,7 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	shade_pixels( start_row, end_row );
 }
 #else
-static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
+void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
 	size_t seek;
 	
@@ -586,180 +550,3 @@ static void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	shade_pixels( start_row, end_row );
 }
 #endif
-
-#if 0
-	#define SELF ( (unsigned) pthread_self() )
-	
-	#define pthread_create(a,b,c,d) do { \
-		printf("%u: creating thread\n", SELF ); \
-		pthread_create(a,b,c,d); \
-	} while(0)
-
-	#define pthread_mutex_lock(x) do { \
-		printf("%u: waiting for %s\n", SELF, #x ); \
-		pthread_mutex_lock(x); \
-		printf("%u: got %s\n", SELF, #x ); \
-	} while(0)
-
-	#define pthread_mutex_unlock(x) do { \
-		printf("%u: released %s\n", SELF, #x ); \
-		pthread_mutex_unlock(x); \
-	} while(0)
-#endif
-
-static int cond_wait_ms( pthread_cond_t *cond, pthread_mutex_t *mutex, int millis )
-{
-	struct timespec abstime;
-	clock_gettime( CLOCK_REALTIME, &abstime );
-	
-	abstime.tv_nsec += millis * 1000000;
-	if ( abstime.tv_nsec > 999999999 )
-	{
-		abstime.tv_sec += abstime.tv_nsec / 1000000000;
-		abstime.tv_nsec %= 1000000000;
-	}
-	
-	return pthread_cond_timedwait( cond, mutex, &abstime );
-}
-
-static void *render_thread_func( void *p )
-{
-	const RenderThread *self = p;
-	int running = 1;
-	unsigned old_frame_id = INITIAL_FRAME_ID;
-	
-	size_t y0, y1, ray_buffer_size;
-	float *ray_buffer; /* temporary buffer for ray origins & directions */
-	
-	y0 = self->id * render_resy / num_threads;
-	y1 = ( self->id + 1 ) * render_resy / num_threads;
-	
-	printf( "Thread %d: Initializing.. got scanlines %u ... %u\n", self->id, (unsigned) y0, (unsigned) y1 );
-	
-	ray_buffer_size = sizeof( __m128 ) * 6 * ( y1 - y0 ) * render_resx;
-	ray_buffer = aligned_alloc( sizeof( __m128 ), ray_buffer_size );
-	
-	if ( !ray_buffer ) {
-		printf( "Error: Failed to allocate ray buffer (%u KiB)\n", (unsigned)(ray_buffer_size>>10) );
-		return NULL;
-	}
-	
-	while( running )
-	{
-		int s;
-		
-		/* Obtain render_state */
-		pthread_mutex_lock( &render_state_mutex );
-		/*pthread_cond_wait( &render_state_cond, &render_state_mutex );*/
-		cond_wait_ms( &render_state_cond, &render_state_mutex, 1 );
-		s = render_state;
-		pthread_mutex_unlock( &render_state_mutex );
-		
-		switch( s )
-		{
-			case R_RENDER:
-				/* Compare last rendered frame ID with the current frame ID.
-					We don't want to render the same thing twice. */
-				if ( old_frame_id != current_frame_id )
-				{
-					/* Do some heavy number crunching and recursion */
-					render_part( self->y0, self->y1, ray_buffer );
-					old_frame_id = current_frame_id;
-					
-					/* Job finished - notify main thread */
-					pthread_mutex_lock( &finished_parts_mutex );
-					finished_parts += 1;
-					pthread_cond_signal( &finished_parts_cond );
-					pthread_mutex_unlock( &finished_parts_mutex );
-				}
-				break;
-			
-			case R_EXIT:
-				running = 0;
-				break;
-			
-			default:
-				/* Spurious wakeup */
-				break;
-		}
-	}
-	
-	free( ray_buffer );
-	printf( "Thread %d: I'm done\n", self->id );
-	return NULL;
-}
-
-void stop_render_threads( void )
-{
-	int n;
-	
-	if ( num_threads <= 0 )
-		return;
-	
-	printf( "Stopping renderer threads...\n" );
-	
-	/* Request all threads to terminate */
-	pthread_mutex_lock( &render_state_mutex );
-	render_state = R_EXIT;
-	pthread_cond_broadcast( &render_state_cond );
-	pthread_mutex_unlock( &render_state_mutex );
-	
-	/* Wait until all threads have terminated */
-	for( n=0; n<num_threads; n++ )
-		pthread_join( threads[n].thread, NULL );
-	
-	printf( "Threads terminated as expected\n" );
-}
-
-void start_render_threads( int count )
-{	
-	int n;
-	
-	if ( num_threads > 0 )
-	{
-		/* Clear the old threads before creating new ones */
-		stop_render_threads();
-	}
-	
-	if ( count <= 0 )
-		return;
-	
-	num_threads = count;
-	render_state = R_RENDER;
-	current_frame_id = INITIAL_FRAME_ID;
-	finished_parts = 0;
-	
-	printf( "Starting renderer threads... (%d)\n", count );
-	for( n=0; n<num_threads; n++ ) {
-		threads[n].id = n;
-		pthread_create( &threads[n].thread, NULL, render_thread_func, threads+n );
-	}
-}
-
-void render_volume( void )
-{
-	if ( num_threads <= 0 )
-	{
-		/* Render alone */
-		render_part( 0, render_resy, main_thread_ray_buffer );
-	}
-	else
-	{
-		pthread_mutex_lock( &finished_parts_mutex );
-		finished_parts = 0;
-		
-		/* Advance frame counter; causes worker threads to re-render */
-		pthread_mutex_lock( &render_state_mutex );
-		current_frame_id++;
-		pthread_cond_broadcast( &render_state_cond );
-		pthread_mutex_unlock( &render_state_mutex );
-		
-		while( finished_parts < num_threads )
-		{
-			/* Wait until threads are finished */
-			pthread_cond_wait( &finished_parts_cond, &finished_parts_mutex );
-		}
-		
-		pthread_mutex_unlock( &finished_parts_mutex );
-	}
-}

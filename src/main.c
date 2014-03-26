@@ -13,14 +13,15 @@
 #include "city.h"
 
 #include "camera.h"
-#include "raycaster.h"
+#include "render_core.h"
+#include "render_threads.h"
 #include "text.h"
 
 #define RENDER_RESOLUTION_DIV 1
 #define DEFAULT_RESX 320
 #define DEFAULT_RESY 240
 #define DEFAULT_OCTREE_DEPTH 9
-#define DEFAULT_THREADS 0
+#define DEFAULT_THREADS 2
 
 #define DEFAULT_FOV radians(65)
 #define FOV_INCR radians(5)
@@ -265,12 +266,6 @@ static void draw_ui_overlay( SDL_Surface *surf )
 		the_volume->size );
 }
 
-static void render( SDL_Surface *surf )
-{
-	render_volume();
-	draw_ui_overlay( surf );
-}
-
 static void load_materials( void )
 {
 	SDL_Surface *s;
@@ -335,7 +330,7 @@ int main( int argc, char **argv )
 	load_materials();
 	resize( resx, resy, 0 );
 	
-	printf( "Render resolution: %dx%d (%dx%d)\n", resx, resy, render_resx, render_resy );
+	printf( "Render resolution: %dx%d (%dx%d)\n", resx, resy, (int) render_resx, (int) render_resy );
 	printf( "Rendering threads: %d\n", n_threads );
 	printf( "Max octree depth: %d\n", max_octree_depth );
 	printf( "Max voxel resolution: %d\n", 1 << max_octree_depth );
@@ -349,8 +344,9 @@ int main( int argc, char **argv )
 	
 	reset_camera();
 	
-	if ( n_threads > 0 )
+	if ( n_threads > 0 ) {
 		start_render_threads( n_threads );
+	}
 	
 	for( ;; )
 	{
@@ -537,7 +533,11 @@ int main( int argc, char **argv )
 		}
 		
 		process_input( screen->w >> 1, screen->h >> 1 );
-		render( screen );
+		
+		begin_volume_rendering();
+		SDL_Delay( 2 );
+		end_volume_rendering();
+		draw_ui_overlay( screen );
 		SDL_Flip( screen );
 		
 		millis_per_frame = 

@@ -1,24 +1,45 @@
 #include <math.h>
 #include "normals.h"
 
-/* Number of spiral revolutions multiplied by 2pi.
-The distribution of normal vectors depends on this constant;
-some values give more uniform distribution than others */
-static const float u = 4100.8;
+#define N NUM_NORMALS
 
-/* Maps integers from range 0-255 to almost uniformly distributed normal vectors (which lie on a spiral) */
-void unpack_normal( PNormal t, float n[3] )
+/* Constants */
+static const float
+	a = 1.0 / N - 1.0,
+	b = 2.0 / N,
+	c = M_PI * ( 3.0 - sqrt( 5.0 ) );
+
+void unpack_normal( PNor k, float xp[1], float yp[1], float zp[1] )
 {
-	float c, z;
-	z = t/255.0f*2 - 1;
-	c = sqrt( 1 - z*z );
-	n[2] = z;
-	n[0] = cos( t / 255.0f * u ) * c;
-	n[1] = sin( t / 255.0f * u ) * c;
+	float z, r, p;
+	
+	z = b * k + a;
+	p = k * c;
+	r = sqrt( 1.0 - z*z );
+	
+	*xp = cos( p ) * r;
+	*yp = sin( p ) * r;
+	*zp = z;
 }
 
-/* Finds an integer that (approximately) corresponds to the given normal vector (which must be normalized) */
-PNormal pack_normal( float const n[3] )
+PNor pack_normal( float x, float y, float z )
 {
-	/* todo */
+	/* Trial and error. Couldn't be any slower */
+	float min_dist = 1000;
+	unsigned n1 = 0;
+	unsigned n;
+	for( n=0; n<N; n++ )
+	{
+		float nx, ny, nz, dx, dy, dz, dist;
+		unpack_normal( n, &nx, &ny, &nz );
+		dx = x - nx;
+		dy = y - ny;
+		dz = z - nz;
+		dist = dx*dx + dy*dy + dz*dz;
+		if ( dist < min_dist ) {
+			min_dist = dist;
+			n1 = n;
+		}
+	}
+	return n1;
 }
