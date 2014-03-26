@@ -13,7 +13,7 @@ typedef struct SlaveThreadParams
 } SlaveThreadParams;
 
 #define MAX_RENDER_THREADS 64
-static volatile SlaveThreadParams threads[MAX_RENDER_THREADS];
+static SlaveThreadParams threads[MAX_RENDER_THREADS];
 int num_render_threads = 0;
 
 static Mutex render_state_mutex = MUTEX_INITIALIZER;
@@ -134,7 +134,7 @@ void stop_render_threads( void )
 	
 	/* Wait until all threads have terminated */
 	for( n=0; n<num_render_threads; n++ )
-		thread_join( threads[n].thread, NULL );
+		thread_join( threads[n].thread );
 	
 	printf( "Threads terminated as expected\n" );
 	
@@ -145,6 +145,17 @@ void stop_render_threads( void )
 void start_render_threads( int count )
 {	
 	int n;
+	
+	#ifdef NEED_EXPLICIT_MUTEX_INIT
+	static int has_init = 0;
+	if ( !has_init ) {
+		mutex_init( &render_state_mutex );
+		mutex_init( &finished_parts_mutex );
+		cond_init( &render_state_cond );
+		cond_init( &finished_parts_cond );
+		has_init = 1;
+	}
+	#endif
 	
 	if ( count <= 0 )
 		return;
@@ -165,7 +176,7 @@ void start_render_threads( int count )
 	
 	for( n=0; n<num_render_threads; n++ ) {
 		threads[n].id = n;
-		thread_create( (pthread_t*) &threads[n].thread, NULL, render_thread_func, (void*)(threads+n) );
+		thread_create( &threads[n].thread, render_thread_func, (void*)(threads+n) );
 	}
 }
 
