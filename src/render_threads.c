@@ -17,7 +17,6 @@ static SlaveThreadParams threads[MAX_RENDER_THREADS];
 int num_render_threads = 0;
 
 static Mutex render_state_mutex = MUTEX_INITIALIZER;
-static Cond render_state_cond = COND_INITIALIZER;
 
 /* *********************************************** */
 /* All of this is associated with render_state_mutex */
@@ -59,11 +58,6 @@ static void *render_thread_func( void *p )
 		
 		mutex_lock( &render_state_mutex );
 		{
-			#if 0
-			/* Wait for a signal from the master thread */
-			cond_wait( &render_state_cond, &render_state_mutex );
-			#endif
-			
 			/* Get local copies of the global variables */
 			my_render_state = render_state;
 			my_current_frame_id = current_frame_id;
@@ -122,16 +116,6 @@ void stop_render_threads( void )
 	render_state = R_EXIT;
 	mutex_unlock( &render_state_mutex );
 	
-	#if 0
-	/* Request all threads to terminate */
-	mutex_lock( &render_state_mutex );
-	{
-		render_state = R_EXIT;
-		cond_broadcast( &render_state_cond );
-	}
-	mutex_unlock( &render_state_mutex );
-	#endif
-	
 	/* Wait until all threads have terminated */
 	for( n=0; n<num_render_threads; n++ )
 		thread_join( threads[n].thread );
@@ -151,7 +135,6 @@ void start_render_threads( int count )
 	if ( !has_init ) {
 		mutex_init( &render_state_mutex );
 		mutex_init( &finished_parts_mutex );
-		cond_init( &render_state_cond );
 		cond_init( &finished_parts_cond );
 		has_init = 1;
 	}
@@ -172,6 +155,7 @@ void start_render_threads( int count )
 	current_frame_id = INITIAL_FRAME_ID;
 	finished_parts = 0;
 	
+	/* Keep this mutex hostage whenever workers aren't supposed to do anything */
 	mutex_lock( &render_state_mutex );
 	
 	for( n=0; n<num_render_threads; n++ ) {
@@ -186,19 +170,11 @@ void begin_volume_rendering( void )
 	if ( num_render_threads <= 0 )
 		return;
 	
-	/* At least 1 slave thread */
-	/** mutex_lock( &render_state_mutex ); **/
-	{
-		current_frame_id++;
-		
-		mutex_lock( &finished_parts_mutex );
-		finished_parts = 0;
-		
-		/* Wake up the worker threads.
-			Once they notice that current_frame_id
-			has increased they will start rendering. */
-		cond_broadcast( &render_state_cond );
-	}
+	mutex_lock( &finished_parts_mutex );
+	current_frame_id++;
+	finished_parts = 0;
+	
+	/* Release the hostage */
 	mutex_unlock( &render_state_mutex );
 }
 
@@ -212,5 +188,6 @@ void end_volume_rendering( void )
 	}
 	mutex_unlock( &finished_parts_mutex );
 	
+	/* Freeze workers */
 	mutex_lock( &render_state_mutex );
 }
