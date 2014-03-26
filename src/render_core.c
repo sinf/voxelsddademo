@@ -273,12 +273,15 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	const int use_dac_method = 0;
 	
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
+	
 	__m128 ox, oy, oz;
 	size_t y, x, r;
 	size_t resx = render_resx;
 	size_t resy = end_row - start_row;
 	size_t num_rays = total_pixels;
+	size_t pixel_seek;
 	
+	float *normal_p[3];
 	float *depth_p, *depth_p0;
 	uint8 *mat_p, *mat_p0;
 	
@@ -292,10 +295,14 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	ray_dz = ray_dy + ray_attr_skip;
 	
 	/* Initialize pixel pointers */
-	mat_p0 = render_output_m + start_row * render_resx;
-	depth_p0 = render_output_z + start_row * render_resx;
+	pixel_seek = start_row * render_resx;
+	mat_p0 = render_output_m + pixel_seek;
+	depth_p0 = render_output_z + pixel_seek;
 	mat_p = mat_p0;
 	depth_p = depth_p0;
+	
+	for( x=0; x<3; x++ )
+		normal_p[x] = render_output_n[x] + pixel_seek;
 	
 	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz );
 	
@@ -315,7 +322,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		mat_p = mat_p0;
 		depth_p = depth_p0;
 		
-		oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0, render_output_n );
+		oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0, normal_p );
 	}
 	else
 	{
@@ -336,9 +343,9 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				ray.d[1] = ray_dy[r];
 				ray.d[2] = ray_dz[r];
 				
-				nor_p[0] = render_output_n[0] + r;
-				nor_p[1] = render_output_n[1] + r;
-				nor_p[2] = render_output_n[2] + r;
+				nor_p[0] = normal_p[0] + r;
+				nor_p[1] = normal_p[1] + r;
+				nor_p[2] = normal_p[2] + r;
 				
 				oc_traverse( the_volume, &ray, &mat, depth_p, nor_p );
 				
