@@ -1,10 +1,16 @@
 #pragma once
 #ifndef _VOXELS_H
 #define _VOXELS_H
+#include <stddef.h>
 #include "types.h"
 #include "vector.h"
 #include "aabb.h"
 #include "materials.h"
+
+/* Side length of a normal vector chunk */
+#define NOR_BRICK_S 8
+#define NOR_BRICK_S2 (NOR_BRICK_S*NOR_BRICK_S)
+#define NOR_BRICK_S3 (NOR_BRICK_S*NOR_BRICK_S2)
 
 struct OctreeNode;
 typedef struct OctreeNode
@@ -16,7 +22,6 @@ typedef struct OctreeNode
 		For non-leaf nodes:
 			The most common (=mode) material in child nodes */
 	Material_ID mat;
-	float nor[3];
 } OctreeNode;
 
 typedef struct Octree
@@ -25,6 +30,9 @@ typedef struct Octree
 	int size; /* Bounding box size for root node; 1 << root_level */
 	int root_level; /* Highest (root) octree level */
 	OctreeNode root;
+	float **nor_bricks; /* array of pointers to normal vector arrays whose size is NORMAL_BRICK_S^3 */
+	uint16 *nor_density; /* how many nonzero normals per brick */
+	size_t nor_bricks_x; /* how many bricks per x/y/z axis */
 } Octree;
 
 #ifdef VOXEL_INTERNALS
@@ -34,6 +42,9 @@ void oc_collapse_node( Octree *oc, OctreeNode *node ); /* Delete child nodes if 
 void get_node_bounds( aabb3f *bounds, const vec3i pos, int size );
 Material_ID get_mode_material( OctreeNode *node );
 #endif
+
+void set_voxel_normal( Octree *oc, unsigned x, unsigned y, unsigned z, float nx, float ny, float nz );
+void get_voxel_normal( Octree const *oc, unsigned x, unsigned y, unsigned z, float *nx, float *ny, float *nz );
 
 /* Memory management */
 Octree *oc_init( int toplevel );
