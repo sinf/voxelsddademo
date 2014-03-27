@@ -198,7 +198,8 @@ void end_volume_rendering( RayPerfInfo info[1] )
 	
 	if ( info )
 	{
-		info->frame_time = get_microsec() - frame_start_time;
+		uint64_t t = get_microsec();
+		info->frame_time = t > frame_start_time ? ( t - frame_start_time ) : 0;
 		info->rays_per_frame = render_resx * render_resy << enable_shadows;
 		info->rays_per_sec = info->frame_time ? ( 1000000 * info->rays_per_frame + 500000 ) / info->frame_time : 0;
 	}

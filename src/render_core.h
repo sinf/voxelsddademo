@@ -6,6 +6,7 @@
 #include "voxels.h"
 #include "materials.h"
 
+/* todo: try to get rid of these globals */
 extern Octree *the_volume;
 extern Camera camera;
 extern volatile int enable_shadows;
@@ -13,6 +14,8 @@ extern volatile int show_normals;
 extern Material materials[NUM_MATERIALS];
 extern size_t render_resx, render_resy;
 extern uint32 *render_output_rgba;
+
+void set_light_pos( float x, float y, float z );
 
 /* (Re)allocates memory. Restarts render threads */
 void resize_render_output( int w, int h );
@@ -23,6 +26,7 @@ void get_primary_ray( Ray *ray, const Camera *c, int x, int y );
 /* Used by render_threads.c */
 void render_part( size_t start_row, size_t end_row, float *ray_buffer );
 
+/* Makes render_output_rgba point to the last frame. The next frame will be rendered into another buffer */
 void swap_render_buffers( void );
 
 #endif

@@ -5,8 +5,6 @@
 #include "voxels.h"
 #include "voxels_csg.h"
 
-static const float NOR_BLEED = 1.0f;
-
 typedef int (*CSG_Function)( const aabb3f *, const void * );
 typedef void (*Normal_Function)( float nor[3], const void *, float px, float py, float pz );
 
@@ -24,20 +22,21 @@ static void update_normal( OctreeNode *node, aabb3f *box, const CSG_Object *csg_
 	( box->min[0] + box->max[0] ) * 0.5f,
 	( box->min[1] + box->max[1] ) * 0.5f,
 	( box->min[2] + box->max[2] ) * 0.5f );
-	if ( mat < 0 && !node->nor[0] && !node->nor[1] && !node->nor[2] ) {
+	if ( !mat ) {
 		node->nor[0] = -node->nor[0];
 		node->nor[1] = -node->nor[1];
 		node->nor[2] = -node->nor[2];
 	}
 }
 
-static void csg_operation( Octree *oc, OctreeNode *node, int level, const vec3i node_pos, const CSG_Object *csg_obj )
+static int csg_operation( Octree *oc, OctreeNode *node, int level, const vec3i node_pos, const CSG_Object *csg_obj )
 {
 	aabb3f node_bounds;
 	int size = 1 << level;
 	int mat = csg_obj->material;
 	OverlapStatus overlap;
 	int u;
+	int child_mat[8];
 	
 	get_node_bounds( &node_bounds, node_pos, size );
 	overlap = csg_obj->overlaps_aabb( &node_bounds, csg_obj->data );
@@ -45,25 +44,27 @@ static void csg_operation( Octree *oc, OctreeNode *node, int level, const vec3i 
 	if ( overlap == NO_TOUCH )
 	{
 		/* This octree node does not even touch the CSG object. Ignore. */
-		return;
+		return node->mat;
 	}
 	
 	if ( overlap == INSIDE )
 	{
-		/* The node is completely inside the CSG object. No subdivision needed. */
+		/* The node is completely inside the CSG object */
 		oc_collapse_node( oc, node );
-		if ( mat >= 0 ) node->mat = mat;
-		update_normal( node, &node_bounds, csg_obj, mat ); /** memset( node->nor, 0, sizeof node->nor ); **/
-		return;
+		node->mat = mat;
+		if ( mat )
+			update_normal( node, &node_bounds, csg_obj, mat );
+		return mat;
 	}
+	
+	update_normal( node, &node_bounds, csg_obj, mat );
 	
 	if ( level == 0 )
 	{
 		/* Leaf node and overlaps the CSG object. Mark as solid.
 		And since this is a leaf node it does not need to be collapsed */
-		if ( mat >= 0 ) node->mat = mat;
-		update_normal( node, &node_bounds, csg_obj, mat );
-		return;
+		node->mat = mat;
+		return mat;
 	}
 	
 	/* Partial overlap with the CSG object and this is not a leaf node so do a recursive subdivision. */
@@ -79,7 +80,7 @@ static void csg_operation( Octree *oc, OctreeNode *node, int level, const vec3i 
 		for( k=0; k<3; k++ )
 			p[k] = node_pos[k] + ( OC_RECURSION_MASK[u][k] & size );
 		
-		csg_operation( oc, &node->children[u], level, p, csg_obj );
+		child_mat[u] = csg_operation( oc, &node->children[u], level, p, csg_obj );
 	}
 	
 	level = level + 1;
@@ -89,18 +90,17 @@ static void csg_operation( Octree *oc, OctreeNode *node, int level, const vec3i 
 	for( u=0; u<8; u++ )
 	{
 		OctreeNode *child = &node->children[u];
-		if ( (int) child->mat != mat || child->children )
+		if ( child_mat[u] != mat || child->children )
 		{
 			/* Children don't share the same material or one of the children is not a leaf -> can not have duplicate data. */
-			node->mat = get_mode_material( node );
-			return;
+			return node->mat = get_mode_material( node );
 		}
 	}
 	
 	/* Delete duplicates */
 	oc_collapse_node( oc, node );
-	if ( mat >= 0 ) node->mat = mat;
-	update_normal( node, &node_bounds, csg_obj, mat );
+	node->mat = mat;
+	return mat;
 }
 
 static void calc_sphere_normal( float nor[3], const Sphere *s, float x, float y, float z )
@@ -158,14 +158,6 @@ void csg_sphere( Octree *oc, const Sphere *sph, Material_ID mat )
 	ob.data = sph;
 	ob.material = mat;
 	csg_operation( oc, &oc->root, oc->root_level, root_pos, &ob );
-	
-	if ( !mat ) {
-		Sphere sph2 = *sph;
-		sph2.r += NOR_BLEED; /* Since we're digging instead of filling, write flipped normals for the exposed surface */
-		ob.data  = &sph2;
-		ob.material = -1; /* Negative value prevents materials from being altered */
-		csg_operation( oc, &oc->root, oc->root_level, root_pos, &ob );
-	}
 }
 
 void csg_box( Octree *oc, const aabb3f *box, Material_ID mat )
@@ -178,16 +170,4 @@ void csg_box( Octree *oc, const aabb3f *box, Material_ID mat )
 	ob.data = box;
 	ob.material = mat;
 	csg_operation( oc, &oc->root, oc->root_level, root_pos, &ob );
-	
-	if ( !mat ) {
-		aabb3f box2;
-		int k;
-		for( k=0; k<3; k++ ) {
-			box2.min[k] = box->min[k] - NOR_BLEED;
-			box2.max[k] = box->max[k] + NOR_BLEED;
-		}
-		ob.material = -1;
-		ob.data = &box2;
-		csg_operation( oc, &oc->root, oc->root_level, root_pos, &ob );
-	}
 }
