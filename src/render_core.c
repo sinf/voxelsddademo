@@ -23,8 +23,9 @@ uint32 *render_output_rgba = NULL;
 
 Material materials[NUM_MATERIALS];
 
-volatile int enable_shadows = 0;
-volatile int show_normals = 0;
+int enable_shadows = 0;
+int enable_phong = 0;
+int show_normals = 0;
 
 static float screen_uv_scale[2];
 static float screen_uv_min[2];
@@ -178,7 +179,6 @@ static void shade_pixels( size_t start_row, size_t end_row )
 	
 	for( y=start_row; y<end_row; y++ )
 	{
-		
 		/**
 		for( x=0; x<render_resx; x+=4 )
 		{
@@ -208,6 +208,7 @@ static void shade_pixels( size_t start_row, size_t end_row )
 			mat_p += 2;
 		}
 		**/
+		
 		if ( show_normals )
 		{
 			for( x=0; x<render_resx; x++,out_p++ ) {
@@ -222,14 +223,45 @@ static void shade_pixels( size_t start_row, size_t end_row )
 		}
 		else
 		{
-			for( x=0; x<render_resx; x++,mat_p++,out_p++ )
-				*out_p = materials[*mat_p].color;
+			if ( enable_phong ) {
+				for( x=0; x<render_resx; x+=4 )
+				{
+					__m128 vx, vy, vz;
+					__m128 tlx, tly, tlz;
+					__m128i c;
+					
+					/* Gather material colors */
+					c = _mm_set_epi32(
+					materials[mat_p[0]].color,
+					materials[mat_p[1]].color,
+					materials[mat_p[2]].color,
+					materials[mat_p[3]].color );
+					
+					/* Get world space normal vector */
+					vx = _mm_load_ps( nx );
+					vy = _mm_load_ps( ny );
+					vz = _mm_load_ps( nz );
+					
+					/*todo*/
+					
+					nx += 4;
+					ny += 4;
+					nz += 4;
+					out_p += 4;
+					mat_p += 4;
+				}
+			}
+			else
+			{
+				for( x=0; x<render_resx; x++,mat_p++,out_p++ )
+					*out_p = materials[*mat_p].color;
+			}
 		}
 	}
 }
 
 #define ENABLE_RAY_CAST 1
-#if 0
+#if 1
 static void generate_primary_rays(
 	size_t resx,
 	size_t start_row,
