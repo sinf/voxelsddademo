@@ -41,11 +41,11 @@ static int mouse_y = 0;
 static double millis_per_frame = 0;
 static SDL_Surface *screen = NULL;
 static int benchmark_mode = 0;
+static Uint32 main_loop_start_time = 0;
 
 static void quit( /* any number of arguments */ )
 {
 	stop_render_threads();
-	SDL_Delay( 300 );
 	SDL_Quit();
 	exit(0);
 }
@@ -232,8 +232,10 @@ float dot_product4( const vec3f a, const vec3f b )
 }
 #endif
 
-static void draw_ui_overlay( SDL_Surface *surf )
+static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 {
+	char buf[256];
+	
 	if ( surf->w < 200 || surf->h < 200 )
 		return;
 	
@@ -254,17 +256,25 @@ static void draw_ui_overlay( SDL_Surface *surf )
 	#endif
 	
 	draw_text_f( surf,
-		0, surf->h - 4*GLYPH_H,
+		0, surf->h - 5*GLYPH_H,
 		"Mat=%d\n"
 		"%d ms\n"
 		"Depth: %d/%d\n"
 		"Nodes: %u\n"
-		"Resolution: %d^3\n",
+		"Volume: %d^3\n",
 		brush_mat,
 		(int) millis_per_frame,
 		the_volume->root_level - oc_detail_level, the_volume->root_level,
 		the_volume->num_nodes,
 		the_volume->size );
+	
+	snprintf( buf, sizeof(buf), "%dx%d|%4u ms|%u K rays|%3u.%03u M rays/sec ",
+		surf->w, surf->h,
+		(unsigned)( ( perf.frame_time + 500 ) / 1000 ),
+		(unsigned)( ( perf.rays_per_frame + 500 ) / 1000 ),
+		(unsigned)( perf.rays_per_sec / 1000000 ), (unsigned)( ( perf.rays_per_sec + 500 ) / 1000 % 1000 ) );
+	
+	draw_text( surf, surf->w - strlen(buf) * GLYPH_W, surf->h - GLYPH_H, buf );
 }
 
 static void load_materials( void )
@@ -369,11 +379,14 @@ int main( int argc, char **argv )
 		start_render_threads( n_threads );
 	}
 	
+	main_loop_start_time = SDL_GetTicks();
+	
 	for( ;; )
 	{
 		const Uint32 loop_start_time = SDL_GetTicks();
 		SDL_Event event;
 		FILE *file;
+		RayPerfInfo perf;
 		
 		while( SDL_PollEvent(&event) )
 		{
@@ -562,12 +575,12 @@ int main( int argc, char **argv )
 		memcpy( screen->pixels, render_output_rgba, render_resx*render_resy*4 );
 		SDL_UnlockSurface( screen );
 		
-		draw_ui_overlay( screen );
+		draw_ui_overlay( screen, perf );
 		
 		/* Flip the buffers of OS */
 		SDL_Flip( screen );
 		
-		end_volume_rendering(); /* End worker threads */
+		end_volume_rendering( &perf ); /* End worker threads */
 		swap_render_buffers();
 		
 		millis_per_frame = ( SDL_GetTicks() - loop_start_time );

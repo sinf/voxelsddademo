@@ -9,7 +9,7 @@
 	11x16
 */
 
-#define GLYPH_W 9
+#define GLYPH_W 10
 #define GLYPH_H 17
 
 struct SDL_Surface;

@@ -7,18 +7,16 @@ static SDL_Surface *font = NULL;
 
 int load_font( void )
 {
-	SDL_Surface *surf;
-	surf = SDL_LoadBMP( "data/font_9x17.bmp" );
+	SDL_Surface *a;
 	
-	if ( !surf )
+	a = SDL_LoadBMP( "data/font_9x17.bmp" );
+	
+	if ( !a )
 		return 0;
 	
-	font = SDL_DisplayFormat( surf );
-	
-	if ( font )
-		SDL_FreeSurface( surf );
-	else
-		font = surf;
+	font = SDL_DisplayFormat( a );
+	SDL_FreeSurface( a );
+	SDL_SetColorKey( font, SDL_SRCCOLORKEY|SDL_SRCALPHA, SDL_MapRGB( font->format, 0xFF, 0, 0 ) );
 	
 	return 1;
 }

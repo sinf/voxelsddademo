@@ -5,6 +5,7 @@
 #include "render_threads.h"
 #include "render_core.h"
 #include "threads.h"
+#include "microsec.h"
 
 typedef struct SlaveThreadParams
 {
@@ -26,7 +27,8 @@ static volatile enum {
 } render_state = R_RENDER;
 
 #define INITIAL_FRAME_ID 0
-static volatile unsigned current_frame_id = INITIAL_FRAME_ID;
+typedef uint64 FrameID;
+volatile FrameID current_frame_id = INITIAL_FRAME_ID;
 /* *********************************************** */
 
 static Mutex finished_parts_mutex = MUTEX_INITIALIZER;
@@ -36,7 +38,7 @@ static volatile int finished_parts = 0; /* Associated with finished_parts_mutex 
 static void *render_thread_func( void *p )
 {
 	const SlaveThreadParams * const volatile self = p;
-	unsigned my_old_frame_id = INITIAL_FRAME_ID;
+	FrameID my_old_frame_id = INITIAL_FRAME_ID;
 	int running = 1;
 	size_t start_row, end_row, ray_buffer_size;
 	float *ray_buffer; /* temporary buffer for ray origins & directions */
@@ -53,7 +55,7 @@ static void *render_thread_func( void *p )
 	
 	while( running )
 	{
-		unsigned my_current_frame_id;
+		FrameID my_current_frame_id;
 		int my_render_state;
 		
 		mutex_lock( &render_state_mutex );
@@ -164,6 +166,7 @@ void start_render_threads( int count )
 	}
 }
 
+static uint64 frame_start_time = 0;
 void begin_volume_rendering( void )
 {	
 	/* No threads, can't render */
@@ -174,11 +177,13 @@ void begin_volume_rendering( void )
 	current_frame_id++;
 	finished_parts = 0;
 	
+	frame_start_time = get_microsec();
+	
 	/* Release the hostage */
 	mutex_unlock( &render_state_mutex );
 }
 
-void end_volume_rendering( void )
+void end_volume_rendering( RayPerfInfo info[1] )
 {
 	/* This thread has already locked finished_parts_mutex */
 	while( finished_parts < num_render_threads )
@@ -190,4 +195,11 @@ void end_volume_rendering( void )
 	
 	/* Freeze workers */
 	mutex_lock( &render_state_mutex );
+	
+	if ( info )
+	{
+		info->frame_time = get_microsec() - frame_start_time;
+		info->rays_per_frame = render_resx * render_resy << enable_shadows;
+		info->rays_per_sec = info->frame_time ? ( 1000000 * info->rays_per_frame + 500000 ) / info->frame_time : 0;
+	}
 }
