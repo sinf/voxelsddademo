@@ -188,20 +188,23 @@ void get_node_bounds( aabb3f *bounds, const vec3i pos, int size )
 	}
 }
 
-/* Chooses the most frequent (mode) material in children */
+/* Chooses the most frequent (mode) material in children
+Material zero is treated as a second class citizen */
 Material_ID get_mode_material( OctreeNode *node )
 {
 	int count[NUM_MATERIALS] = {0};
 	int freq, index;
 	int n;
 	
-	for( n=0; n<8; n++ )
-		count[ node->children[n].mat ] += 1;
+	for( n=1; n<8; n++ ) {
+		int m = node->children[n].mat;
+		count[m] += 1;
+	}
 	
 	index = 0;
 	freq = 0;
 	
-	for( n=0; n<NUM_MATERIALS; n++ )
+	for( n=1; n<NUM_MATERIALS; n++ )
 	{
 		if ( count[n] >= freq )
 		{
@@ -209,6 +212,9 @@ Material_ID get_mode_material( OctreeNode *node )
 			index = n;
 		}
 	}
+	
+	if ( !freq )
+		index = 0;
 	
 	return index;
 }

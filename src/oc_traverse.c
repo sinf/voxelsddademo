@@ -28,6 +28,7 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 	fast_uint rec_mask = 0; /* child traversal order */
 	fast_uint s; /* current stack level */
 	fast_int r; /* loop counter */
+	fast_uint max_level = oc->root_level - oc_detail_level;
 	
 	/* Calculate ray intersection with root node */
 	stack[0].node = &oc->root;
@@ -82,7 +83,7 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 		if ( near > far || far < 0.0f )
 			POP_STACK;
 		
-		if ( parent->children )
+		if ( parent->children && ( !ALLOW_DEBUG_VISUALS || s < max_level ) )
 		{
 			fast_uint n, k;
 			const float *tsplit;
@@ -133,13 +134,15 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 				*out_z = near;
 				
 				if ( out_nor ) {
-					unsigned cx = ray->o[0] + near * ray->d[0];
-					unsigned cy = ray->o[1] + near * ray->d[1];
-					unsigned cz = ray->o[2] + near * ray->d[2];
+					#if 1
+					unsigned cx = ray->o[0] + near * ray->d[0] + .5f;
+					unsigned cy = ray->o[1] + near * ray->d[1] + .5f;
+					unsigned cz = ray->o[2] + near * ray->d[2] + .5f;
 					cx %= oc->size;
 					cy %= oc->size;
 					cz %= oc->size;
 					get_voxel_normal( oc, cx, cy, cz, out_nor[0], out_nor[1], out_nor[2] );
+					#endif
 					/**
 					*out_nor[0] = parent->nor[0];
 					*out_nor[1] = parent->nor[1];

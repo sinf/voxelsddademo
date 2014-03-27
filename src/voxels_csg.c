@@ -58,7 +58,7 @@ static void fill_normals( Octree *oc, aabb3f box[1], const CSG_Object *csg_obj, 
 		for( y=y0; y<y1; y++ ) {
 			for( z=z0; z<z1; z++ ) {
 				float n[3];
-				csg_obj->calc_normal( n, csg_obj->data, x, y, z );
+				csg_obj->calc_normal( n, csg_obj->data, x+.5f, y+.5f, z+.5f );
 				if ( !mat ) {
 					n[0] = -n[0];
 					n[1] = -n[1];
@@ -164,14 +164,16 @@ static void calc_sphere_normal( float nor[3], const Sphere *s, float x, float y,
 }
 
 static void calc_box_normal( float nor[3], const aabb3f *box, float x, float y, float z )
-{	
+{
+	float xy, xz, yz;
+	
 	x = fabs( x - ( box->min[0] + box->max[0] ) * 0.5f );
 	y = fabs( y - ( box->min[1] + box->max[1] ) * 0.5f );
 	z = fabs( z - ( box->min[2] + box->max[2] ) * 0.5f );
 	
-	if ( x < z ) {
+	if ( x > z ) {
 		nor[2] = 0;
-		if ( x < y ) {
+		if ( x > y ) {
 			nor[0] = x < 0 ? -1 : 1;
 			nor[1] = 0;
 		} else {
@@ -180,7 +182,7 @@ static void calc_box_normal( float nor[3], const aabb3f *box, float x, float y, 
 		}
 	} else {
 		nor[0] = 0;
-		if ( y < z ) {
+		if ( y > z ) {
 			nor[1] = y < 0 ? -1 : 1;
 			nor[2] = 0;
 		} else {

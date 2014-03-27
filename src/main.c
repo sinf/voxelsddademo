@@ -260,15 +260,15 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	#endif
 	
 	draw_text_f( surf,
-		0, surf->h - 4*GLYPH_H,
-		"Mat=%d\n"
+		0, SHOW_HELP ? ( surf->h - 4*GLYPH_H ) : 0,
+		"Vol.s: %d^3\n"
 		"Depth: %d/%d\n"
 		"Nodes: %u\n"
-		"Vol.s: %d^3\n",
-		brush_mat,
+		"Mat=%d\n",
+		the_volume->size,
 		the_volume->root_level - oc_detail_level, the_volume->root_level,
 		the_volume->num_nodes,
-		the_volume->size );
+		brush_mat );
 	
 	snprintf( buf, sizeof(buf), "%dx%d|%4u ms|%u K rays|%3u.%03u M rays/sec ",
 		surf->w, surf->h,
@@ -543,6 +543,10 @@ int main( int argc, char **argv )
 								mouse_y = screen->h >> 1;
 								SDL_WarpMouse( mouse_x, mouse_y );
 							}
+							break;
+						
+						case SDLK_p:
+							enable_phong = !enable_phong;
 							break;
 						
 						case SDLK_ESCAPE:
