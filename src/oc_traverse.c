@@ -134,7 +134,7 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 				*out_z = near;
 				
 				if ( out_nor ) {
-					#if 1
+					#if 0
 					unsigned cx = ray->o[0] + near * ray->d[0] + .5f;
 					unsigned cy = ray->o[1] + near * ray->d[1] + .5f;
 					unsigned cz = ray->o[2] + near * ray->d[2] + .5f;

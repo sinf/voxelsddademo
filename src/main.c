@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include "SDL.h"
+#include <xmmintrin.h>
 
 #include "types.h"
 #include "vector.h"
@@ -18,7 +19,6 @@
 #include "text.h"
 #include "graph.h"
 
-#define RENDER_RESOLUTION_DIV 1
 #define DEFAULT_RESX 400
 #define DEFAULT_RESY 300
 #define DEFAULT_OCTREE_DEPTH 9
@@ -41,6 +41,7 @@ static int mouse_y = 0;
 
 static SDL_Surface *screen = NULL;
 static int benchmark_mode = 0;
+static int do_upscale_2x = 1;
 
 static void quit( /* any number of arguments */ )
 {
@@ -66,7 +67,7 @@ static void resize( int w, int h, int extra_flags )
 		exit(0);
 	}
 	
-	resize_render_output( w, h );
+	resize_render_output( w >> do_upscale_2x, h >> do_upscale_2x );
 }
 
 static void setup_test_scene( Octree *volume )
@@ -270,8 +271,8 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 		the_volume->num_nodes,
 		brush_mat );
 	
-	snprintf( buf, sizeof(buf), "%dx%d|%4u ms|%u K rays|%3u.%03u M rays/sec ",
-		surf->w, surf->h,
+	snprintf( buf, sizeof(buf), "%ux%u|%4u ms|%u K rays|%3u.%03u M rays/sec ",
+		(unsigned) render_resx, (unsigned) render_resy,
 		(unsigned)( ( perf.frame_time + 500 ) / 1000 ),
 		(unsigned)( ( perf.rays_per_frame + 500 ) / 1000 ),
 		(unsigned)( perf.rays_per_sec / 1000000 ), (unsigned)( ( perf.rays_per_sec + 500 ) / 1000 % 1000 ) );
@@ -317,6 +318,28 @@ static void load_materials( void )
 	SDL_UnlockSurface( s );
 	SDL_FreeSurface( s );
 	printf( "Ok\n" );
+}
+
+static void blit2x( uint32 *dst, uint32 *src, size_t w, size_t h, size_t dst_pitch )
+{
+	float *dst0, *dst1;
+	size_t y, x;
+	
+	dst0 = (float*) dst;
+	dst1 = dst0 + dst_pitch / 4;
+	dst_pitch /= 2;
+	
+	for( y=0; y<h; y++ ) {
+		for( x=0; x<w; x+=2,src+=2 ) {
+			__m128 a;
+			a = _mm_loadl_pi( _mm_setzero_ps(), (void*) src );
+			a = _mm_shuffle_ps( a, a, 0x50 );
+			_mm_store_ps( dst0+2*x, a ); /* SDL better align the memory or else... */
+			_mm_store_ps( dst1+2*x, a );
+		}
+		dst0 += dst_pitch;
+		dst1 += dst_pitch;
+	}
 }
 
 static const char HELP_TEXT[] = \
@@ -548,6 +571,10 @@ int main( int argc, char **argv )
 						case SDLK_p:
 							enable_phong = !enable_phong;
 							break;
+						case SDLK_u:
+							do_upscale_2x = !do_upscale_2x;
+							resize_render_output( ( screen->w & ~0xF ) >> do_upscale_2x, screen->h >> do_upscale_2x );
+							break;
 						
 						case SDLK_ESCAPE:
 							quit();
@@ -580,7 +607,10 @@ int main( int argc, char **argv )
 		
 		/* Put the previous frame on screen */
 		SDL_LockSurface( screen );
-		memcpy( screen->pixels, render_output_rgba, render_resx*render_resy*4 );
+		if ( do_upscale_2x )
+			blit2x( screen->pixels, render_output_rgba, render_resx, render_resy, screen->pitch );
+		else
+			memcpy( screen->pixels, render_output_rgba, render_resx*render_resy*4 );
 		SDL_UnlockSurface( screen );
 		
 		draw_ui_overlay( screen, perf );
