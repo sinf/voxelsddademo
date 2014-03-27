@@ -16,10 +16,11 @@
 #include "render_core.h"
 #include "render_threads.h"
 #include "text.h"
+#include "graph.h"
 
 #define RENDER_RESOLUTION_DIV 1
-#define DEFAULT_RESX 320
-#define DEFAULT_RESY 240
+#define DEFAULT_RESX 400
+#define DEFAULT_RESY 300
 #define DEFAULT_OCTREE_DEPTH 9
 #define DEFAULT_THREADS 6
 
@@ -234,6 +235,11 @@ float dot_product4( const vec3f a, const vec3f b )
 
 static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 {
+	static Graph graph = {
+		{150,50,MAX_GRAPH_W,100},
+		{255,255,255},{255,0,0},
+		0,0,0,{0}
+	};
 	char buf[256];
 	
 	if ( surf->w < 200 || surf->h < 200 )
@@ -275,6 +281,11 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 		(unsigned)( perf.rays_per_sec / 1000000 ), (unsigned)( ( perf.rays_per_sec + 500 ) / 1000 % 1000 ) );
 	
 	draw_text( surf, surf->w - strlen(buf) * GLYPH_W, surf->h - GLYPH_H, buf );
+	
+	graph.bounds.x = surf->w - graph.bounds.w - 20;
+	graph.bounds.y = 20;
+	update_graph( &graph, perf.rays_per_sec );
+	draw_graph( &graph, surf );
 }
 
 static void load_materials( void )
@@ -565,7 +576,6 @@ int main( int argc, char **argv )
 					break;
 			}
 		}
-		
 		process_input( screen->w >> 1, screen->h >> 1 );
 		
 		begin_volume_rendering(); /* start worker threads */
