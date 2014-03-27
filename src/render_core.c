@@ -14,7 +14,9 @@ Camera camera;
 static uint8 *render_output_m = NULL; /* materials */
 static float *render_output_z = NULL; /* ray depth (distance to first intersection) */
 static float *render_output_n[3] = {NULL,NULL,NULL}; /* surface normals. separate buffers for x,y,z components */
-static uint32 *render_output = NULL;
+
+static uint32 *render_output_write = NULL;
+uint32 *render_output_rgba = NULL;
 
 Material materials[NUM_MATERIALS];
 
@@ -26,21 +28,26 @@ static float screen_uv_min[2];
 
 size_t render_resx=0, render_resy=0;
 static size_t total_pixels = 0;
-static float *main_thread_ray_buffer = NULL;
+
+void swap_render_buffers( void )
+{
+	void *p = render_output_rgba;
+	render_output_rgba = render_output_write;
+	render_output_write = p;
+}
 
 static float calc_raydir_z( void )
 {
 	return fabsf( screen_uv_min[0] ) / tanf( camera.fovx * 0.5f );
 }
 
-void resize_render_output( int w, int h, uint32 *output_rgba )
+void resize_render_output( int w, int h )
 {
 	size_t alignment = 16;
 	double screen_ratio;
 	const int nt = num_render_threads;
 	int k;
 	
-	render_output = output_rgba;
 	stop_render_threads();
 	
 	render_resx = w & ~0xF; /* width needs to be a multiple of 16 */
@@ -54,13 +61,11 @@ void resize_render_output( int w, int h, uint32 *output_rgba )
 		free( render_output_n[1] );
 		free( render_output_n[2] );
 	}
-	if ( main_thread_ray_buffer ) free( main_thread_ray_buffer );
 	
 	if ( !total_pixels ) {
 		render_output_m = NULL;
 		render_output_z = NULL;
 		render_output_n[0] = render_output_n[1] = render_output_n[2] = NULL;
-		main_thread_ray_buffer = NULL;
 		return;
 	}
 	
@@ -72,6 +77,9 @@ void resize_render_output( int w, int h, uint32 *output_rgba )
 	
 	render_output_m = aligned_alloc( alignment, total_pixels * sizeof render_output_m[0] );
 	render_output_z = aligned_alloc( alignment, total_pixels * sizeof render_output_z[0] );
+	
+	render_output_write = aligned_alloc( alignment, total_pixels * sizeof( uint32 ) );
+	render_output_rgba = aligned_alloc( alignment, total_pixels * sizeof( uint32 ) );
 	
 	for( k=0; k<3; k++ )
 		render_output_n[k] = aligned_alloc( alignment, total_pixels * sizeof render_output_n[0][0] );
@@ -151,7 +159,7 @@ static void shade_pixels( size_t start_row, size_t end_row )
 	size_t x, y;
 	/*float *depth_p = render_output_z + seek;*/
 	uint8 *mat_p = render_output_m + seek;
-	uint32 *out_p = render_output + seek;
+	uint32 *out_p = render_output_write + seek;
 	float *nx = render_output_n[0] + seek;
 	float *ny = render_output_n[1] + seek;
 	float *nz = render_output_n[2] + seek;
@@ -203,7 +211,7 @@ static void shade_pixels( size_t start_row, size_t end_row )
 		else
 		{
 			for( x=0; x<render_resx; x++,mat_p++,out_p++ )
-				*out_p = *(uint32*) materials[*mat_p].color;
+				*out_p = materials[*mat_p].color;
 		}
 	}
 }

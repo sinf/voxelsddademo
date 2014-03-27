@@ -40,6 +40,7 @@ static int mouse_y = 0;
 
 static double millis_per_frame = 0;
 static SDL_Surface *screen = NULL;
+static int benchmark_mode = 0;
 
 static void quit( /* any number of arguments */ )
 {
@@ -66,7 +67,7 @@ static void resize( int w, int h, int extra_flags )
 		exit(0);
 	}
 	
-	resize_render_output( w, h, screen->pixels );
+	resize_render_output( w, h );
 }
 
 static void setup_test_scene( Octree *volume )
@@ -284,8 +285,9 @@ static void load_materials( void )
 		for( x=0; x<s->w; x++,m++ )
 		{
 			uint32 pixel = *(uint32*)( (uint8*) s->pixels + s->format->BytesPerPixel * x + s->pitch * y );
-			SDL_GetRGB( pixel, s->format, &materials[m].color[2], &materials[m].color[1], &materials[m].color[0] );
-			materials[m].color[3] = 0xFF; /* opacity */
+			uint8 *dst = (uint8*) &materials[m].color;
+			SDL_GetRGB( pixel, s->format, dst+2, dst+1, dst );
+			*dst |= 0xFF000000; /* opacity */
 			if ( m == n )
 				break;
 		}
@@ -293,12 +295,22 @@ static void load_materials( void )
 			break;
 	}
 	
-	materials[0].color[3] = 0;
+	materials[0].color &= 0xFFFFFF;
 	
 	SDL_UnlockSurface( s );
 	SDL_FreeSurface( s );
 	printf( "Ok\n" );
 }
+
+static const char HELP_TEXT[] = \
+"Usage:\n"
+"    rays.bin [options]\n"
+"Options:\n"
+"  -h,--help   Print this text and exit\n"
+"  -res=WxH    Window size\n"
+"  -d=N        Set maximum octree depth\n"
+"  -t=N        Rendering threads (0=single thread)\n"
+"  -bench      Run benchmark\n";
 
 int main( int argc, char **argv )
 {
@@ -310,20 +322,29 @@ int main( int argc, char **argv )
 	int vflags = 0;
 	char **arg;
 	
+	for( arg=argv+argc-1; arg!=argv; arg-- )
+	{
+		const char *a = *arg;
+		
+		if ( strncmp(a, "-res=", 5) == 0 )
+			sscanf( a, "-res=%dx%d", &resx, &resy );
+		else if ( strncmp(a, "-t=", 3) == 0 )
+			sscanf( a, "-t=%d", &n_threads );
+		else if ( strcmp(a, "-bench") == 0 )
+			benchmark_mode = 1;
+		else if ( strncmp(*arg, "-d=", 3) == 0 )
+			sscanf( *arg, "-d=%d", &max_octree_depth );
+		else if ( !strcmp(a, "-h") || !strcmp(a, "--help") )
+		{
+			printf( "%s", HELP_TEXT );
+			return 0;
+		}
+	}
+	
 	if ( SDL_Init(SDL_INIT_VIDEO) < 0 )
 	{
 		printf( "Failed to initialize SDL, reason: %s\n", SDL_GetError() );
 		return 0;
-	}
-	
-	for( arg=argv+argc-1; arg!=argv; arg-- )
-	{
-		if ( strncmp(*arg, "-res=", 5) == 0 )
-			sscanf( *arg, "-res=%dx%d", &resx, &resy );
-		else if ( strncmp(*arg, "-d=", 3) == 0 )
-			sscanf( *arg, "-d=%d", &max_octree_depth );
-		else if ( strncmp(*arg, "-t=", 3) == 0 )
-			sscanf( *arg, "-t=%d", &n_threads );
 	}
 	
 	signal( SIGINT, quit );
@@ -534,12 +555,20 @@ int main( int argc, char **argv )
 		
 		process_input( screen->w >> 1, screen->h >> 1 );
 		
-		SDL_FillRect( screen, NULL, 0 );
-		begin_volume_rendering();
-		/* SDL_Delay( 2 ); */
-		end_volume_rendering();
+		begin_volume_rendering(); /* start worker threads */
+		
+		/* Put the previous frame on screen */
+		SDL_LockSurface( screen );
+		memcpy( screen->pixels, render_output_rgba, render_resx*render_resy*4 );
+		SDL_UnlockSurface( screen );
+		
 		draw_ui_overlay( screen );
+		
+		/* Flip the buffers of OS */
 		SDL_Flip( screen );
+		
+		end_volume_rendering(); /* End worker threads */
+		swap_render_buffers();
 		
 		millis_per_frame = ( SDL_GetTicks() - loop_start_time );
 		

@@ -12,14 +12,17 @@ extern volatile int enable_shadows;
 extern volatile int show_normals;
 extern Material materials[NUM_MATERIALS];
 extern size_t render_resx, render_resy;
+extern uint32 *render_output_rgba;
 
 /* (Re)allocates memory. Restarts render threads */
-void resize_render_output( int w, int h, uint32 *output_rgba );
+void resize_render_output( int w, int h );
 
 /* Computes origin & direction of one primary ray. (x,y) are pixel coordinates */
 void get_primary_ray( Ray *ray, const Camera *c, int x, int y );
 
 /* Used by render_threads.c */
 void render_part( size_t start_row, size_t end_row, float *ray_buffer );
+
+void swap_render_buffers( void );
 
 #endif
