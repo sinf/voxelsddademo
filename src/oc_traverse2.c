@@ -102,9 +102,11 @@ static void process_leaf( const OctreeNode *node,
 		alive[id] = 0;
 		
 		if ( out_nor ) {
+			/*
 			out_nor[0][id] = node->nor[0];
 			out_nor[1][id] = node->nor[1];
 			out_nor[2][id] = node->nor[2];
+			*/
 		}
 	}
 }

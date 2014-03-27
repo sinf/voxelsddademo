@@ -133,9 +133,18 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 				*out_z = near;
 				
 				if ( out_nor ) {
+					unsigned cx = ray->o[0] + near * ray->d[0];
+					unsigned cy = ray->o[1] + near * ray->d[1];
+					unsigned cz = ray->o[2] + near * ray->d[2];
+					cx %= oc->size;
+					cy %= oc->size;
+					cz %= oc->size;
+					get_voxel_normal( oc, cx, cy, cz, out_nor[0], out_nor[1], out_nor[2] );
+					/**
 					*out_nor[0] = parent->nor[0];
 					*out_nor[1] = parent->nor[1];
 					*out_nor[2] = parent->nor[2];
+					**/
 				}
 				
 				return;

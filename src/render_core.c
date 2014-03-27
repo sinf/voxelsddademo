@@ -229,7 +229,7 @@ static void shade_pixels( size_t start_row, size_t end_row )
 }
 
 #define ENABLE_RAY_CAST 1
-#if 1
+#if 0
 static void generate_primary_rays(
 	size_t resx,
 	size_t start_row,

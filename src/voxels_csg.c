@@ -16,16 +16,57 @@ typedef struct CSG_Object
 	int material;
 } CSG_Object;
 
-static void update_normal( OctreeNode *node, aabb3f *box, const CSG_Object *csg_obj, int mat )
+static void get_normal( float nor[3], aabb3f box[1], const CSG_Object csg_obj[1], int mat )
 {
-	csg_obj->calc_normal( node->nor, csg_obj->data,
+	csg_obj->calc_normal( nor, csg_obj->data,
 	( box->min[0] + box->max[0] ) * 0.5f,
 	( box->min[1] + box->max[1] ) * 0.5f,
 	( box->min[2] + box->max[2] ) * 0.5f );
 	if ( !mat ) {
-		node->nor[0] = -node->nor[0];
-		node->nor[1] = -node->nor[1];
-		node->nor[2] = -node->nor[2];
+		nor[0] = -nor[0];
+		nor[1] = -nor[1];
+		nor[2] = -nor[2];
+	}
+}
+
+static void fill_normals( Octree *oc, aabb3f box[1], const CSG_Object *csg_obj, int mat )
+{
+	int x0, y0, z0, x1, y1, z1;
+	int x, y, z;
+	int max;
+	
+	#define MIN(x,y) ((x)<(y)?(x):(y))
+	#define MAX(x,y) ((x)>(y)?(x):(y))
+	
+	x0 = box->min[0];
+	y0 = box->min[1];
+	z0 = box->min[2];
+	x1 = box->max[0];
+	y1 = box->max[1];
+	z1 = box->max[2];
+	
+	x0 = MAX( 0, x0 );
+	y0 = MAX( 0, y0 );
+	z0 = MAX( 0, z0 );
+	
+	max = oc->size - 1;
+	x1 = MIN( max, x1 );
+	y1 = MIN( max, y1 );
+	z1 = MIN( max, z1 );
+	
+	for( x=x0; x<x1; x++ ) {
+		for( y=y0; y<y1; y++ ) {
+			for( z=z0; z<z1; z++ ) {
+				float n[3];
+				csg_obj->calc_normal( n, csg_obj->data, x, y, z );
+				if ( !mat ) {
+					n[0] = -n[0];
+					n[1] = -n[1];
+					n[2] = -n[2];
+				}
+				set_voxel_normal( oc, x, y, z, n[0], n[1], n[2] );
+			}
+		}
 	}
 }
 
@@ -52,15 +93,16 @@ static int csg_operation( Octree *oc, OctreeNode *node, int level, const vec3i n
 		/* The node is completely inside the CSG object */
 		oc_collapse_node( oc, node );
 		node->mat = mat;
-		if ( mat )
-			update_normal( node, &node_bounds, csg_obj, mat );
+		fill_normals( oc, &node_bounds, csg_obj, mat );
 		return mat;
 	}
 	
-	update_normal( node, &node_bounds, csg_obj, mat );
-	
 	if ( level == 0 )
 	{
+		float n[3];
+		get_normal( n, &node_bounds, csg_obj, mat );
+		set_voxel_normal( oc, node_pos[0], node_pos[1], node_pos[2], n[0], n[1], n[2] );
+		
 		/* Leaf node and overlaps the CSG object. Mark as solid.
 		And since this is a leaf node it does not need to be collapsed */
 		node->mat = mat;
