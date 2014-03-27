@@ -8,6 +8,9 @@
 #include "render_core.h"
 #include "render_threads.h"
 
+/* Used to prevent self-occlusion */
+#define SHADOW_RAY_DEPTH_OFFSET 0.001f
+
 Octree *the_volume = NULL;
 Camera camera;
 
@@ -28,6 +31,15 @@ static float screen_uv_min[2];
 
 size_t render_resx=0, render_resy=0;
 static size_t total_pixels = 0;
+
+static float light_x[4], light_y[4], light_z[4];
+
+void set_light_pos( float x, float y, float z )
+{
+	_mm_store_ps( light_x, _mm_set1_ps(x) );
+	_mm_store_ps( light_y, _mm_set1_ps(y) );
+	_mm_store_ps( light_z, _mm_set1_ps(z) );
+}
 
 void swap_render_buffers( void )
 {
@@ -365,12 +377,12 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	if ( enable_shadows )
 	{
 		__m128 lx, ly, lz, dx, dy, dz, depth;
-		__m128 depth_offset = _mm_set1_ps( 0.001f );
+		__m128 depth_offset = _mm_set1_ps( SHADOW_RAY_DEPTH_OFFSET );
 		
 		/* Light origin */
-		lx = _mm_set1_ps( -the_volume->size );
-		ly = _mm_set1_ps( 2*the_volume->size );
-		lz = lx;
+		lx = _mm_load_ps( light_x );
+		ly = _mm_load_ps( light_y );
+		lz = _mm_load_ps( light_z );
 		
 		/* Generate shadow rays */
 		depth_p = depth_p0;
@@ -552,21 +564,18 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			if ( enable_shadows )
 			{
 				/* Shadow ray */
-				vec3f light_pos;
 				float z = *depth_p;
 				int a;
 				
-				light_pos[0] = light_pos[2] = -the_volume->size;
-				light_pos[1] = 2 * the_volume->size;
-				
 				/* Avoid self-occlusion */
-				z -= 0.001f;
+				z -= SHADOW_RAY_DEPTH_OFFSET;
 				
 				for( a=0; a<PADDED_VEC3_SIZE; a++ )
-				{
 					ray.o[a] = ray.o[a] + ray.d[a] * z;
-					ray.d[a] = light_pos[a] - ray.o[a];
-				}
+				
+				ray.d[0] = light_x[0] - ray.o[0];
+				ray.d[1] = light_y[0] - ray.o[1];
+				ray.d[2] = light_z[0] - ray.o[2];
 				
 				normalize( ray.d );
 				oc_traverse( the_volume, &ray, &m, &z, NULL );

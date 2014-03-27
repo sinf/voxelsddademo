@@ -39,10 +39,8 @@ static float brush_radius = BRUSH_DEFAULT_RADIUS;
 static int mouse_x = 0;
 static int mouse_y = 0;
 
-static double millis_per_frame = 0;
 static SDL_Surface *screen = NULL;
 static int benchmark_mode = 0;
-static Uint32 main_loop_start_time = 0;
 
 static void quit( /* any number of arguments */ )
 {
@@ -262,14 +260,12 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	#endif
 	
 	draw_text_f( surf,
-		0, surf->h - 5*GLYPH_H,
+		0, surf->h - 4*GLYPH_H,
 		"Mat=%d\n"
-		"%d ms\n"
 		"Depth: %d/%d\n"
 		"Nodes: %u\n"
-		"Volume: %d^3\n",
+		"Vol.s: %d^3\n",
 		brush_mat,
-		(int) millis_per_frame,
 		the_volume->root_level - oc_detail_level, the_volume->root_level,
 		the_volume->num_nodes,
 		the_volume->size );
@@ -282,8 +278,8 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	
 	draw_text( surf, surf->w - strlen(buf) * GLYPH_W, surf->h - GLYPH_H, buf );
 	
-	graph.bounds.x = surf->w - graph.bounds.w - 20;
-	graph.bounds.y = 20;
+	graph.bounds.x = surf->w - graph.bounds.w - 3;
+	graph.bounds.y = 30;
 	update_graph( &graph, perf.rays_per_sec );
 	draw_graph( &graph, surf );
 }
@@ -342,6 +338,7 @@ int main( int argc, char **argv )
 	
 	int vflags = 0;
 	char **arg;
+	RayPerfInfo perf = {0};
 	
 	for( arg=argv+argc-1; arg!=argv; arg-- )
 	{
@@ -385,19 +382,16 @@ int main( int argc, char **argv )
 		printf( "Warning: failed to load font: %s\n", SDL_GetError() );
 	
 	reset_camera();
+	set_light_pos( -the_volume->size, 2*the_volume->size, -the_volume->size );
 	
 	if ( n_threads > 0 ) {
 		start_render_threads( n_threads );
 	}
 	
-	main_loop_start_time = SDL_GetTicks();
-	
 	for( ;; )
 	{
-		const Uint32 loop_start_time = SDL_GetTicks();
 		SDL_Event event;
 		FILE *file;
-		RayPerfInfo perf;
 		
 		while( SDL_PollEvent(&event) )
 		{
@@ -592,16 +586,6 @@ int main( int argc, char **argv )
 		
 		end_volume_rendering( &perf ); /* End worker threads */
 		swap_render_buffers();
-		
-		millis_per_frame = ( SDL_GetTicks() - loop_start_time );
-		
-		#if 0
-		millis_per_frame = 
-			0.75 * millis_per_frame
-			+ 0.25 * ( SDL_GetTicks() - loop_start_time );
-		if ( millis_per_frame < 20.0 )
-			SDL_Delay( 20 - millis_per_frame );
-		#endif
 	}
 	
 	quit();
