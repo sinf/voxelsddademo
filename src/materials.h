@@ -7,7 +7,7 @@
 The color is used as background color */
 
 typedef struct Material {
-	uint8 color[4];
+	uint32 color;
 } Material;
 
 typedef unsigned Material_ID;
