@@ -260,6 +260,57 @@ static void shade_pixels( size_t start_row, size_t end_row )
 	}
 }
 
+static void reconstruct_normals( size_t first_row, size_t end_row, float *ray_dx, float *ray_dy, float *ray_dz, float *depth_p )
+{
+	size_t y, x;
+	for( y=first_row; y<(end_row-1); y++ )
+	{
+		for( x=0; x<(render_resx-1); x++ )
+		{
+			float a = depth_p[0];
+			float ax = ray_dx[0] * a;
+			float ay = ray_dy[0] * a;
+			float az = ray_dz[0] * a;
+			
+			float b = depth_p[1];
+			float bx = ray_dx[1] * b;
+			float by = ray_dy[1] * b;
+			float bz = ray_dz[1] * b;
+			
+			float c = depth_p[render_resx];
+			float cx = ray_dx[render_resx] * c;
+			float cy = ray_dy[render_resx] * c;
+			float cz = ray_dz[render_resx] * c;
+			
+			float ux = bx - ax;
+			float uy = by - ay;
+			float uz = bz - az;
+			
+			float vx = cx - ax;
+			float vy = cy - ay;
+			float vz = cz - az;
+			
+			float nx = uy * vz - uz * vy;
+			float ny = uz * vx - ux * vz;
+			float nz = ux * vy - uy * vx;
+			float N = sqrtf( nx*nx + ny*ny + nz*nz );
+			
+			render_output_n[0][y*render_resx + x] = nx/N;
+			render_output_n[1][y*render_resx + x] = ny/N;
+			render_output_n[2][y*render_resx + x] = nz/N;
+			
+			ray_dx += 1;
+			ray_dy += 1;
+			ray_dz += 1;
+			depth_p += 1;
+		}
+		ray_dx++;
+		ray_dy++;
+		ray_dz++;
+		depth_p++;
+	}
+}
+
 #define ENABLE_RAY_CAST 1
 #if 1
 static void generate_primary_rays(
@@ -406,6 +457,9 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			}
 		}
 	}
+	
+	reconstruct_normals( start_row, end_row, ray_dx, ray_dy, ray_dz, depth_p0 );
+	
 	if ( enable_shadows )
 	{
 		__m128 lx, ly, lz, dx, dy, dz, depth;

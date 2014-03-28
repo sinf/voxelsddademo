@@ -44,7 +44,7 @@ Material_ID get_mode_material( OctreeNode *node );
 #endif
 
 void set_voxel_normal( Octree *oc, unsigned x, unsigned y, unsigned z, float nx, float ny, float nz );
-void get_voxel_normal( Octree const *oc, unsigned x, unsigned y, unsigned z, float *nx, float *ny, float *nz );
+void get_voxel_normal( Octree const *oc, uint64 voxel_index, float *nx, float *ny, float *nz );
 
 /* Memory management */
 Octree *oc_init( int toplevel );
