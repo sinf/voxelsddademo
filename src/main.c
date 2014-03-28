@@ -41,7 +41,7 @@ static int mouse_y = 0;
 
 static SDL_Surface *screen = NULL;
 static int benchmark_mode = 0;
-static int do_upscale_2x = 1;
+static int do_upscale_2x = 0;
 
 static void quit( /* any number of arguments */ )
 {
@@ -320,22 +320,27 @@ static void load_materials( void )
 	printf( "Ok\n" );
 }
 
-static void blit2x( uint32 *dst, uint32 *src, size_t w, size_t h, size_t dst_pitch )
+void blit2x( uint32 *dst, uint32 *src, size_t w, size_t h, size_t dst_pitch )
 {
 	float *dst0, *dst1;
 	size_t y, x;
 	
+	dst_pitch >>= 2;
 	dst0 = (float*) dst;
-	dst1 = dst0 + dst_pitch / 4;
-	dst_pitch /= 2;
+	dst1 = dst0 + dst_pitch;
+	dst_pitch <<= 1;
 	
 	for( y=0; y<h; y++ ) {
-		for( x=0; x<w; x+=2,src+=2 ) {
-			__m128 a;
-			a = _mm_loadl_pi( _mm_setzero_ps(), (void*) src );
+		for( x=0; x<w; x+=4,src+=4 ) {
+			__m128 a, b;
+			a = _mm_load_ps( (void*) src );
+			b = _mm_shuffle_ps( a, a, 0xFA );
+			_mm_store_ps( dst0+2*x+4, b );
+			_mm_store_ps( dst1+2*x+4, b );
 			a = _mm_shuffle_ps( a, a, 0x50 );
-			_mm_store_ps( dst0+2*x, a ); /* SDL better align the memory or else... */
+			_mm_store_ps( dst0+2*x, a );
 			_mm_store_ps( dst1+2*x, a );
+			/* SDL better align the memory or else... */
 		}
 		dst0 += dst_pitch;
 		dst1 += dst_pitch;
