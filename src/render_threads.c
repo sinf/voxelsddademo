@@ -168,7 +168,7 @@ void start_render_threads( int count )
 
 static uint64 frame_start_time = 0;
 void begin_volume_rendering( void )
-{	
+{
 	/* No threads, can't render */
 	if ( num_render_threads <= 0 )
 		return;
@@ -185,6 +185,9 @@ void begin_volume_rendering( void )
 
 void end_volume_rendering( RayPerfInfo info[1] )
 {
+	if ( num_render_threads <= 0 )
+		return;
+	
 	/* This thread has already locked finished_parts_mutex */
 	while( finished_parts < num_render_threads )
 	{

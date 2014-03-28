@@ -22,7 +22,7 @@ static uint32 *render_output_write = NULL;
 uint32 *render_output_rgba = NULL;
 
 Material materials[NUM_MATERIALS];
-float materials_rgb[NUM_MATERIALS][3];
+float materials_rgb[NUM_MATERIALS][4];
 
 int enable_shadows = 0;
 int enable_phong = 0;
@@ -220,6 +220,7 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					__m128 tlx, tly, tlz;
 					__m128 tex, tey, tez;
 					__m128 d;
+					__m128 mat_dif[4];
 					__m128i colors;
 					int k;
 					
@@ -243,6 +244,10 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					d = dot_prod( nor_x, nor_y, nor_z, tlx, tly, tlz );
 					d = _mm_max_ps( _mm_setzero_ps(), d );
 					
+					/* Gather material diffuse parameters */
+					for( k=0; k<4; k++ ) mat_dif[k] = _mm_load_ps( materials_rgb[mat_p[k]] );
+					_MM_TRANSPOSE4_PS( mat_dif[0], mat_dif[1], mat_dif[2], mat_dif[3] );
+					
 					colors = _mm_setzero_si128();
 					
 					for( k=0; k<3; k++ )
@@ -250,8 +255,7 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 						__m128 r;
 						__m128i i;
 						
-						/* Gather material diffuse parameters */
-						r = _mm_setr_ps( materials_rgb[mat_p[0]][k], materials_rgb[mat_p[1]][k], materials_rgb[mat_p[2]][k], materials_rgb[mat_p[3]][k] );
+						r = mat_dif[k];
 						
 						/* Compute diffuse term */
 						r = _mm_mul_ps( r, _mm_mul_ps( ldif[k], d ) );
@@ -259,15 +263,13 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 						/* Gamma correction. sqrt is equivalent to pow(value,1/gamma) when gamma==2.0 */
 						r = _mm_sqrt_ps( r );
 						
-						/* Convert to byte range */
-						r = _mm_mul_ps( r, max_byte );
-						i = _mm_cvtps_epi32( r );
-						
+						/* Convert to byte and pack RGB */
+						i = _mm_cvtps_epi32( _mm_mul_ps( r, max_byte ) );
 						colors = _mm_slli_epi32( colors, 8 );
 						colors = _mm_or_si128( colors, i );
 					}
 					
-					_mm_store_si128( out_p, colors );
+					_mm_store_si128( (void*) out_p, colors );
 					
 					wox += 4;
 					woy += 4;

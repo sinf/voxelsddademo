@@ -351,10 +351,10 @@ static void blit2x( uint32 *dst, uint32 *src, size_t w, size_t h, size_t dst_pit
 		for( x=0; x<w; x+=4,src+=4 ) {
 			__m128 a, b;
 			a = _mm_load_ps( (void*) src );
-			b = _mm_shuffle_ps( a, a, 0xFA );
+			b = _mm_unpackhi_ps( a, a );
+			a = _mm_unpacklo_ps( a, a );
 			_mm_store_ps( dst0+2*x+4, b );
 			_mm_store_ps( dst1+2*x+4, b );
-			a = _mm_shuffle_ps( a, a, 0x50 );
 			_mm_store_ps( dst0+2*x, a );
 			_mm_store_ps( dst1+2*x, a );
 			/* SDL better align the memory or else... */
