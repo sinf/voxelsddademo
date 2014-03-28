@@ -11,11 +11,11 @@ env.Append( LIBPATH=["./loadbmp"] )
 env.Append( LIBS=Split("loadbmp rt m pthread") )
 env.Append( CCFLAGS=Split(
 	"-Wall -Wextra -ansi -pedantic -pthread -march=native -g"
-	" -O0"
-	#" -O4 -ffast-math -funsafe-math-optimizations -ffinite-math-only"
+	#" -O0"
+	" -O4 -ffast-math -funsafe-math-optimizations -ffinite-math-only"
 	" -Wno-char-subscripts" # No warning for using a char as a counter in loops
+	#" -ftree-vectorizer-verbose=3"
 	))
-#	" -ftree-vectorizer-verbose=7"
 
 if 0:
 	env.Append( CCFLAGS=["-pg"] )

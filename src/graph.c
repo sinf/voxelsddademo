@@ -33,7 +33,7 @@ static void draw_scale( Graph const g[1], SDL_Surface dst[1], Uint32 color, Sint
 {
 	int step, steps = 3;
 	int y, y_inc;
-	Sint64 value, value_inc;
+	Sint64 value, value_inc, unit_fract, rounding;
 	SDL_Rect r;
 	
 	value = g->min;
@@ -42,8 +42,14 @@ static void draw_scale( Graph const g[1], SDL_Surface dst[1], Uint32 color, Sint
 	y_inc = g->bounds.h * value_inc / range;
 	y = g->bounds.y + g->bounds.h;
 	
+	unit_fract = g->unit_size / 1000;
+	rounding = g->show_fraction ? unit_fract : g->unit_size;
+	rounding >>= 1;
+	
 	for( step=0; step<=steps; step++ )
 	{
+		int tx, ty;
+		
 		/* Draw a small stick that shows the exact position of this step */
 		r.x = g->bounds.x - 30;
 		r.y = y;
@@ -51,10 +57,18 @@ static void draw_scale( Graph const g[1], SDL_Surface dst[1], Uint32 color, Sint
 		r.h = 1;
 		SDL_FillRect( dst, &r, color );
 		
-		draw_text_f( dst, g->bounds.x-7*GLYPH_W, y-GLYPH_H, "%3d.%03d",
-			(int)( value / 1000000 ),
-			(int)( ( ( value + 500 ) / 1000 ) % 1000 )
-		);
+		tx = g->bounds.x - 7 * GLYPH_W;
+		ty = y - GLYPH_H;
+		
+		if ( g->show_fraction ) {
+			draw_text_f( dst, tx, ty, "%3d.%03d",
+				(int)( value / g->unit_size ),
+				(int)( ( ( value + rounding ) / unit_fract ) % unit_fract )
+			);
+		} else {
+			draw_text_f( dst, tx, ty, "%7d",
+				(int)( ( value + rounding ) / g->unit_size ) );
+		}
 		
 		y -= y_inc;
 		value += value_inc;
