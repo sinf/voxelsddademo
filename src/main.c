@@ -235,8 +235,15 @@ float dot_product4( const vec3f a, const vec3f b )
 static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 {
 	static Graph graph = {
-		{150,50,MAX_GRAPH_W,100},
+		{0,0,MAX_GRAPH_W,80},
 		{255,255,255},{255,0,0},
+		1000000,1,
+		0,0,0,{0}
+	};
+	static Graph graph2 = {
+		{0,0,MAX_GRAPH_W,80},
+		{255,255,255},{0,255,0},
+		1000,0,
 		0,0,0,{0}
 	};
 	char buf[256];
@@ -280,9 +287,18 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	draw_text( surf, surf->w - strlen(buf) * GLYPH_W, surf->h - GLYPH_H, buf );
 	
 	graph.bounds.x = surf->w - graph.bounds.w - 3;
-	graph.bounds.y = 30;
+	graph.bounds.y = 50;
+	
+	graph2.bounds.x = surf->w - graph2.bounds.w - 3;
+	graph2.bounds.y = graph.bounds.y + graph.bounds.h + 50;
+	
 	update_graph( &graph, perf.rays_per_sec );
+	update_graph( &graph2, perf.frame_time );
 	draw_graph( &graph, surf );
+	draw_graph( &graph2, surf );
+	
+	draw_text( surf, graph.bounds.x - 5 * GLYPH_W, graph.bounds.y - 2*GLYPH_H, "M Rays/sec" );
+	draw_text( surf, graph2.bounds.x - 3 * GLYPH_W, graph2.bounds.y - 2*GLYPH_H, "ms/frame" );
 }
 
 static void load_materials( void )

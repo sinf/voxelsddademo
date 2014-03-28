@@ -56,10 +56,10 @@ static float calc_raydir_z( void )
 
 void resize_render_output( int w, int h )
 {
-	size_t alignment = 16;
 	double screen_ratio;
 	const int nt = num_render_threads;
 	int k;
+	size_t alloc_pixels;
 	
 	stop_render_threads();
 	
@@ -88,14 +88,13 @@ void resize_render_output( int w, int h )
 	screen_uv_min[1] = 0.5 / screen_ratio;
 	screen_uv_scale[1] = -1.0 / render_resy / screen_ratio;
 	
-	render_output_m = aligned_alloc( alignment, total_pixels * sizeof render_output_m[0] );
-	render_output_z = aligned_alloc( alignment, total_pixels * sizeof render_output_z[0] );
-	
-	render_output_write = aligned_alloc( alignment, total_pixels * sizeof( uint32 ) );
-	render_output_rgba = aligned_alloc( alignment, total_pixels * sizeof( uint32 ) );
-	
+	alloc_pixels = total_pixels + render_resx + 16; /* Allocate some extra pixels */
+	render_output_m = aligned_alloc( 16, alloc_pixels * sizeof render_output_m[0] );
+	render_output_z = aligned_alloc( 16, alloc_pixels * sizeof render_output_z[0] );
+	render_output_write = aligned_alloc( 16, alloc_pixels * sizeof( uint32 ) );
+	render_output_rgba = aligned_alloc( 16, alloc_pixels * sizeof( uint32 ) );
 	for( k=0; k<3; k++ )
-		render_output_n[k] = aligned_alloc( alignment, total_pixels * sizeof render_output_n[0][0] );
+		render_output_n[k] = aligned_alloc( 16, alloc_pixels * sizeof render_output_n[0][0] );
 	
 	start_render_threads( nt );
 }
@@ -262,52 +261,118 @@ static void shade_pixels( size_t start_row, size_t end_row )
 
 static void reconstruct_normals( size_t first_row, size_t end_row, float *ray_dx, float *ray_dy, float *ray_dz, float *depth_p )
 {
-	size_t y, x;
-	for( y=first_row; y<(end_row-1); y++ )
+	static const uint32 stored_sign_mask[] = {0x80000000,0x80000000,0x80000000,0x80000000};
+	size_t second_last_row = end_row - 1;
+	size_t y, x, seek;
+	__m128 sign_mask;
+	float *out_nx, *out_ny, *out_nz;
+	
+	seek = first_row * render_resx;
+	out_nx = render_output_n[0] + seek;
+	out_ny = render_output_n[1] + seek;
+	out_nz = render_output_n[2] + seek;
+	
+	for( y=first_row; y<second_last_row; y++ )
 	{
-		for( x=0; x<(render_resx-1); x++ )
+		__m128 ax0, ay0, az0, lz;
+		
+		ax0 = _mm_load_ss( ray_dx );
+		ay0 = _mm_load_ss( ray_dy );
+		az0 = _mm_load_ss( ray_dz );
+		lz = _mm_load_ss( depth_p );
+		
+		CALC_ROW_NORMALS:
+		for( x=0; x<render_resx; x+=4 )
 		{
-			float a = depth_p[0];
-			float ax = ray_dx[0] * a;
-			float ay = ray_dy[0] * a;
-			float az = ray_dz[0] * a;
+			/* the shuffle mask that rotates 32 bits to the left */
+			const int rot = 0x93;
 			
-			float b = depth_p[1];
-			float bx = ray_dx[1] * b;
-			float by = ray_dy[1] * b;
-			float bz = ray_dz[1] * b;
+			__m128
+			z0, z1, z2,
+			ax, ay, az,
+			bx, by, bz,
+			cx, cy, cz,
+			nx, ny, nz;
 			
-			float c = depth_p[render_resx];
-			float cx = ray_dx[render_resx] * c;
-			float cy = ray_dy[render_resx] * c;
-			float cz = ray_dz[render_resx] * c;
+			z0 = _mm_load_ps( depth_p );
+			z1 = _mm_move_ss( _mm_shuffle_ps( z0, z0, rot ), lz );
+			z2 = _mm_load_ps( depth_p + render_resx );
 			
-			float ux = bx - ax;
-			float uy = by - ay;
-			float uz = bz - az;
+			ax = _mm_load_ps( ray_dx );
+			ay = _mm_load_ps( ray_dy );
+			az = _mm_load_ps( ray_dz );
 			
-			float vx = cx - ax;
-			float vy = cy - ay;
-			float vz = cz - az;
+			/* Left shift ax,ay,az by 32 bits and put ax0,ay0,az0 into the low 32 bits */
+			bx = _mm_move_ss( _mm_shuffle_ps( ax, ax, rot ), ax0 );
+			by = _mm_move_ss( _mm_shuffle_ps( ay, ay, rot ), ay0 );
+			bz = _mm_move_ss( _mm_shuffle_ps( az, az, rot ), az0 );
 			
-			float nx = uy * vz - uz * vy;
-			float ny = uz * vx - ux * vz;
-			float nz = ux * vy - uy * vx;
-			float N = sqrtf( nx*nx + ny*ny + nz*nz );
+			/* load_ss doesn't care about alignment. yay!! */
+			ax0 = _mm_load_ss( ray_dx + 3 );
+			ay0 = _mm_load_ss( ray_dy + 3 );
+			az0 = _mm_load_ss( ray_dz + 3 );
+			lz = _mm_load_ss( depth_p + 3 );
 			
-			render_output_n[0][y*render_resx + x] = nx/N;
-			render_output_n[1][y*render_resx + x] = ny/N;
-			render_output_n[2][y*render_resx + x] = nz/N;
+			cx = _mm_load_ps( ray_dx + render_resx );
+			cy = _mm_load_ps( ray_dy + render_resx );
+			cz = _mm_load_ps( ray_dz + render_resx );
 			
-			ray_dx += 1;
-			ray_dy += 1;
-			ray_dz += 1;
-			depth_p += 1;
+			/* compute world space coordinates from ray direction and depth */
+			ax = _mm_mul_ps( ax, z0 );
+			ay = _mm_mul_ps( ay, z0 );
+			az = _mm_mul_ps( az, z0 );
+			
+			bx = _mm_mul_ps( bx, z1 );
+			by = _mm_mul_ps( by, z1 );
+			bz = _mm_mul_ps( bz, z1 );
+			
+			cx = _mm_mul_ps( cx, z2 );
+			cy = _mm_mul_ps( cy, z2 );
+			cz = _mm_mul_ps( cz, z2 );
+			
+			/* compute vector BA */
+			bx = _mm_sub_ps( ax, bx );
+			by = _mm_sub_ps( ay, by );
+			bz = _mm_sub_ps( az, bz );
+			
+			/* compute vector AC */
+			cx = _mm_sub_ps( cx, ax );
+			cy = _mm_sub_ps( cy, ay );
+			cz = _mm_sub_ps( cz, az );
+			
+			/* cross product: BA x AC */
+			nx = _mm_sub_ps( _mm_mul_ps( by, cz ), _mm_mul_ps( bz, cy ) );
+			ny = _mm_sub_ps( _mm_mul_ps( bz, cx ), _mm_mul_ps( bx, cz ) );
+			nz = _mm_sub_ps( _mm_mul_ps( bx, cy ), _mm_mul_ps( by, cx ) );
+			
+			normalize_vec( &nx, &ny, &nz );
+			
+			_mm_store_ps( out_nx, nx );
+			_mm_store_ps( out_ny, ny );
+			_mm_store_ps( out_nz, nz );
+			
+			out_nx += 4;
+			out_ny += 4;
+			out_nz += 4;
+			
+			ray_dx += 4;
+			ray_dy += 4;
+			ray_dz += 4;
+			
+			depth_p += 4;
 		}
-		ray_dx++;
-		ray_dy++;
-		ray_dz++;
-		depth_p++;
+	}
+	
+	if ( y == second_last_row ) {
+		/* Now, the very last row. But compute deltas from the row above instead of the row below
+		because the row below belongs to some other thread whose data this thread shouldn't access
+		*/
+		depth_p -= render_resx;
+		ray_dx -= render_resx;
+		ray_dy -= render_resx;
+		ray_dz -= render_resx;
+		goto CALC_ROW_NORMALS;
+		/* PS. no clue why the Y component of the very last row doesn't need to be flipped */
 	}
 }
 
