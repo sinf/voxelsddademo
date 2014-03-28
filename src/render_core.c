@@ -22,6 +22,7 @@ static uint32 *render_output_write = NULL;
 uint32 *render_output_rgba = NULL;
 
 Material materials[NUM_MATERIALS];
+float materials_rgb[NUM_MATERIALS][3];
 
 int enable_shadows = 0;
 int enable_phong = 0;
@@ -132,17 +133,22 @@ static void translate_vector( void* restrict out_x, void* restrict out_y, void* 
 	_mm_store_ps( out_z, c );
 }
 
-static void normalize_vec( __m128 *x, __m128 *y, __m128 *z )
+static __m128 dot_prod( __m128 ax, __m128 ay, __m128 az, __m128 bx, __m128 by, __m128 bz )
 {
-	__m128 xx, yy, zz, sq, inv_sq;
-	xx = _mm_mul_ps( *x, *x );
-	yy = _mm_mul_ps( *y, *y );
-	zz = _mm_mul_ps( *z, *z );
-	sq = _mm_add_ps( xx, _mm_add_ps( yy, zz ) );
-	inv_sq = _mm_rsqrt_ps( sq ); /* may cause visual artefacts due to low precision */
-	*x = _mm_mul_ps( *x, inv_sq );
-	*y = _mm_mul_ps( *y, inv_sq );
-	*z = _mm_mul_ps( *z, inv_sq );
+	ax = _mm_mul_ps( ax, bx );
+	ay = _mm_mul_ps( ay, by );
+	az = _mm_mul_ps( az, bz );
+	return _mm_add_ps( _mm_add_ps( ax, ay ), az );
+}
+
+static void normalize_vec( __m128 *px, __m128 *py, __m128 *pz )
+{
+	__m128 x=*px, y=*py, z=*pz, t;
+	t = dot_prod( x, y, z, x, y, z );
+	t = _mm_rsqrt_ps( t );
+	*px = _mm_mul_ps( x, t );
+	*py = _mm_mul_ps( y, t );
+	*pz = _mm_mul_ps( z, t );
 }
 
 static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_mat_p )
@@ -159,11 +165,10 @@ static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_m
 	_mm_store_si128( mat_p, mat );
 }
 
-static void shade_pixels( size_t start_row, size_t end_row )
+static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *woy, float *woz )
 {
 	size_t seek = start_row * render_resx;
 	size_t x, y;
-	/*float *depth_p = render_output_z + seek;*/
 	uint8 *mat_p = render_output_m + seek;
 	uint32 *out_p = render_output_write + seek;
 	float *nx = render_output_n[0] + seek;
@@ -172,36 +177,6 @@ static void shade_pixels( size_t start_row, size_t end_row )
 	
 	for( y=start_row; y<end_row; y++ )
 	{
-		/**
-		for( x=0; x<render_resx; x+=4 )
-		{
-			z = _mm_load_ps( depth_p );
-		}
-		
-		for( x=0; x<render_resx; x+=4 )
-		{
-			__m128 z;
-			__m128i c;
-			
-			z = _mm_loadl_ps( depth_p );
-			
-			
-			__m128i c = _mm_set_ps(
-				*(uint32*) materials[mat_p[0]].color,
-				*(uint32*) materials[mat_p[1]].color,
-				*(uint32*) materials[mat_p[2]].color,
-				*(uint32*) materials[mat_p[3]].color );
-			
-			
-			
-			*out_p = * (uint32*) materials[*mat_p].color;
-			
-			depth_p += 2;
-			out_p += 2;
-			mat_p += 2;
-		}
-		**/
-		
 		if ( show_normals )
 		{
 			for( x=0; x<render_resx; x++,out_p++ ) {
@@ -216,30 +191,92 @@ static void shade_pixels( size_t start_row, size_t end_row )
 		}
 		else
 		{
-			if ( enable_phong ) {
+			if ( enable_phong )
+			{
+				__m128 lx, ly, lz, max_byte;
+				__m128 ldif[3];
+				__m128 eye_x, eye_y, eye_z;
+				
+				max_byte = _mm_set1_ps( 255 );
+				
+				/* Light position */
+				lx = _mm_load_ps( light_x );
+				ly = _mm_load_ps( light_y );
+				lz = _mm_load_ps( light_z );
+				
+				/* Light diffuse reflection constants */
+				ldif[0] = _mm_set1_ps( 1 );
+				ldif[1] = _mm_set1_ps( 1 );
+				ldif[2] = _mm_set1_ps( 1 );
+				
+				eye_x = _mm_set1_ps( camera.pos[0] * the_volume->size );
+				eye_y = _mm_set1_ps( camera.pos[1] * the_volume->size );
+				eye_z = _mm_set1_ps( camera.pos[2] * the_volume->size );
+				
 				for( x=0; x<render_resx; x+=4 )
 				{
+					__m128 nor_x, nor_y, nor_z;
 					__m128 vx, vy, vz;
 					__m128 tlx, tly, tlz;
-					__m128i c;
+					__m128 tex, tey, tez;
+					__m128 d;
+					__m128i colors;
+					int k;
 					
-					/* Gather material colors */
-					c = _mm_set_epi32(
-					materials[mat_p[0]].color,
-					materials[mat_p[1]].color,
-					materials[mat_p[2]].color,
-					materials[mat_p[3]].color );
+					/* Compute vector to light */
+					tlx = _mm_sub_ps( lx, _mm_load_ps( wox ) );
+					tly = _mm_sub_ps( ly, _mm_load_ps( woy ) );
+					tlz = _mm_sub_ps( lz, _mm_load_ps( woz ) );
+					normalize_vec( &tlx, &tly, &tlz );
+					
+					/* Vector to eye */
+					tex = _mm_sub_ps( eye_x, _mm_load_ps( wox ) );
+					tey = _mm_sub_ps( eye_y, _mm_load_ps( woy ) );
+					tez = _mm_sub_ps( eye_z, _mm_load_ps( woz ) );
 					
 					/* Get world space normal vector */
-					vx = _mm_load_ps( nx );
-					vy = _mm_load_ps( ny );
-					vz = _mm_load_ps( nz );
+					nor_x = _mm_load_ps( nx );
+					nor_y = _mm_load_ps( ny );
+					nor_z = _mm_load_ps( nz );
 					
-					/*todo*/
+					/* Dot product of the diffuse term */
+					d = dot_prod( nor_x, nor_y, nor_z, tlx, tly, tlz );
+					d = _mm_max_ps( _mm_setzero_ps(), d );
+					
+					colors = _mm_setzero_si128();
+					
+					for( k=0; k<3; k++ )
+					{
+						__m128 r;
+						__m128i i;
+						
+						/* Gather material diffuse parameters */
+						r = _mm_setr_ps( materials_rgb[mat_p[0]][k], materials_rgb[mat_p[1]][k], materials_rgb[mat_p[2]][k], materials_rgb[mat_p[3]][k] );
+						
+						/* Compute diffuse term */
+						r = _mm_mul_ps( r, _mm_mul_ps( ldif[k], d ) );
+						
+						/* Gamma correction. sqrt is equivalent to pow(value,1/gamma) when gamma==2.0 */
+						r = _mm_sqrt_ps( r );
+						
+						/* Convert to byte range */
+						r = _mm_mul_ps( r, max_byte );
+						i = _mm_cvtps_epi32( r );
+						
+						colors = _mm_slli_epi32( colors, 8 );
+						colors = _mm_or_si128( colors, i );
+					}
+					
+					_mm_store_si128( out_p, colors );
+					
+					wox += 4;
+					woy += 4;
+					woz += 4;
 					
 					nx += 4;
 					ny += 4;
 					nz += 4;
+					
 					out_p += 4;
 					mat_p += 4;
 				}
@@ -247,13 +284,25 @@ static void shade_pixels( size_t start_row, size_t end_row )
 			else
 			{
 				for( x=0; x<render_resx; x++,mat_p++,out_p++ )
+				{
+					#if 0
+					int m = *mat_p;
+					int r = materials_r[m];
+					int g = materials_g[m];
+					int b = materials_b[m];
+					*out_p = r << 16 | g << 8 | b;
+					#else
 					*out_p = materials[*mat_p].color;
+					#endif
+				}
 			}
 		}
 	}
 }
 
-static void reconstruct_normals( size_t first_row, size_t end_row, float *ray_dx, float *ray_dy, float *ray_dz, float *depth_p )
+static void reconstruct_normals( size_t first_row, size_t end_row,
+	float *ray_dx, float *ray_dy, float *ray_dz, float *depth_p,
+	float *wox_p, float *woy_p, float *woz_p )
 {
 	size_t second_last_row = end_row - 1;
 	size_t y, x, seek;
@@ -275,10 +324,7 @@ static void reconstruct_normals( size_t first_row, size_t end_row, float *ray_dx
 		
 		CALC_ROW_NORMALS:
 		for( x=0; x<render_resx; x+=4 )
-		{
-			/* the shuffle mask that rotates 32 bits to the left */
-			const int rot = 0x93;
-			
+		{	
 			__m128
 			z0, z1, z2,
 			ax, ay, az,
@@ -287,7 +333,7 @@ static void reconstruct_normals( size_t first_row, size_t end_row, float *ray_dx
 			nx, ny, nz;
 			
 			z0 = _mm_load_ps( depth_p );
-			z1 = _mm_move_ss( _mm_shuffle_ps( z0, z0, rot ), lz );
+			z1 = _mm_move_ss( _mm_shuffle_ps( z0, z0, 0x93 ), lz );
 			z2 = _mm_load_ps( depth_p + render_resx );
 			
 			ax = _mm_load_ps( ray_dx );
@@ -295,9 +341,9 @@ static void reconstruct_normals( size_t first_row, size_t end_row, float *ray_dx
 			az = _mm_load_ps( ray_dz );
 			
 			/* Left shift ax,ay,az by 32 bits and put ax0,ay0,az0 into the low 32 bits */
-			bx = _mm_move_ss( _mm_shuffle_ps( ax, ax, rot ), ax0 );
-			by = _mm_move_ss( _mm_shuffle_ps( ay, ay, rot ), ay0 );
-			bz = _mm_move_ss( _mm_shuffle_ps( az, az, rot ), az0 );
+			bx = _mm_move_ss( _mm_shuffle_ps( ax, ax, 0x93 ), ax0 );
+			by = _mm_move_ss( _mm_shuffle_ps( ay, ay, 0x93 ), ay0 );
+			bz = _mm_move_ss( _mm_shuffle_ps( az, az, 0x93 ), az0 );
 			
 			/* load_ss doesn't care about alignment. yay!! */
 			ax0 = _mm_load_ss( ray_dx + 3 );
@@ -313,6 +359,14 @@ static void reconstruct_normals( size_t first_row, size_t end_row, float *ray_dx
 			ax = _mm_mul_ps( ax, z0 );
 			ay = _mm_mul_ps( ay, z0 );
 			az = _mm_mul_ps( az, z0 );
+			
+			/* save world space position of the pixel for later use */
+			_mm_store_ps( wox_p, _mm_add_ps( _mm_load_ps( wox_p ), ax ) );
+			_mm_store_ps( woy_p, _mm_add_ps( _mm_load_ps( woy_p ), ay ) );
+			_mm_store_ps( woz_p, _mm_add_ps( _mm_load_ps( woz_p ), az ) );
+			wox_p += 4;
+			woy_p += 4;
+			woz_p += 4;
 			
 			bx = _mm_mul_ps( bx, z1 );
 			by = _mm_mul_ps( by, z1 );
@@ -506,11 +560,13 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		}
 	}
 	
-	reconstruct_normals( start_row, end_row, ray_dx, ray_dy, ray_dz, depth_p0 );
+	/* Fills render_output_n[...] with world space normal vectors
+	and also writes world space position of each pixel to ray_ox/oy/oz */
+	reconstruct_normals( start_row, end_row, ray_dx, ray_dy, ray_dz, depth_p0, ray_ox, ray_oy, ray_oz );
 	
 	if ( enable_shadows )
 	{
-		__m128 lx, ly, lz, dx, dy, dz, depth;
+		__m128 lx, ly, lz, dx, dy, dz;
 		__m128 depth_offset = _mm_set1_ps( SHADOW_RAY_DEPTH_OFFSET );
 		
 		/* Light origin */
@@ -528,21 +584,14 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				oy = _mm_load_ps( ray_oy+r );
 				oz = _mm_load_ps( ray_oz+r );
 				
-				dx = _mm_load_ps( ray_dx+r );
-				dy = _mm_load_ps( ray_dy+r );
-				dz = _mm_load_ps( ray_dz+r );
-				
-				depth = _mm_load_ps( depth_p );
-				depth = _mm_sub_ps( depth, depth_offset ); /* To avoid self-occlusion */
-				
-				ox = _mm_add_ps( ox, _mm_mul_ps( dx, depth ) );
-				oy = _mm_add_ps( oy, _mm_mul_ps( dy, depth ) );
-				oz = _mm_add_ps( oz, _mm_mul_ps( dz, depth ) );
-				
 				dx = _mm_sub_ps( lx, ox );
 				dy = _mm_sub_ps( ly, oy );
 				dz = _mm_sub_ps( lz, oz );
 				normalize_vec( &dx, &dy, &dz );
+				
+				ox = _mm_add_ps( ox, _mm_mul_ps( dx, depth_offset ) );
+				oy = _mm_add_ps( oy, _mm_mul_ps( dy, depth_offset ) );
+				oz = _mm_add_ps( oz, _mm_mul_ps( dz, depth_offset ) );
 				
 				_mm_store_ps( ray_dx+r, dx );
 				_mm_store_ps( ray_dy+r, dy );
@@ -551,8 +600,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				_mm_store_ps( ray_ox+r, ox );
 				_mm_store_ps( ray_oy+r, oy );
 				_mm_store_ps( ray_oz+r, oz );
-				
-				depth_p += 4;
 			}
 		}
 		
@@ -628,7 +675,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	}
 	#endif
 	
-	shade_pixels( start_row, end_row );
+	shade_pixels( start_row, end_row, ray_ox, ray_oy, ray_oz );
 }
 #else
 void render_part( size_t start_row, size_t end_row, float *ray_buffer )
