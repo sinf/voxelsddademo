@@ -13,7 +13,7 @@ extern int enable_shadows;
 extern int show_normals;
 extern int enable_phong;
 extern Material materials[NUM_MATERIALS];
-extern float materials_rgb[NUM_MATERIALS][3];
+extern float materials_rgb[NUM_MATERIALS][4]; /* last component is padding */
 
 extern size_t render_resx, render_resy;
 extern uint32 *render_output_rgba;
