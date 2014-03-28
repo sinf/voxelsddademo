@@ -19,8 +19,8 @@
 #include "text.h"
 #include "graph.h"
 
-#define DEFAULT_RESX 400
-#define DEFAULT_RESY 300
+#define DEFAULT_RESX 800
+#define DEFAULT_RESY 600
 #define DEFAULT_OCTREE_DEPTH 9
 #define DEFAULT_THREADS 6
 
@@ -301,35 +301,36 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	draw_text( surf, graph2.bounds.x - 3 * GLYPH_W, graph2.bounds.y - 2*GLYPH_H, "ms/frame" );
 }
 
-static void load_materials( void )
+static void load_materials( SDL_PixelFormat *format )
 {
+	float gamma = 2.0;
 	SDL_Surface *s;
-	int x, y, n, m;
+	int m;
 	
 	printf( "Loading materials...\n" );
 	s = SDL_LoadBMP( "data/materials.bmp" );
 	if ( !s )
 		return;
 	
-	n = ( s->pitch * s->h / 4 ) & 0xFF;
 	SDL_LockSurface( s );
 	
-	for( m=y=0; y<s->h; y++ )
-	{
-		for( x=0; x<s->w; x++,m++ )
-		{
-			uint32 pixel = *(uint32*)( (uint8*) s->pixels + s->format->BytesPerPixel * x + s->pitch * y );
-			uint8 *dst = (uint8*) &materials[m].color;
-			SDL_GetRGB( pixel, s->format, dst+2, dst+1, dst );
-			*dst |= 0xFF000000; /* opacity */
-			if ( m == n )
-				break;
-		}
-		if ( m == n )
-			break;
-	}
+	/* todo: rewrite this function
+	this will corrupt data and/or segfault if the surface fails to load,
+	or if there isn't enough pixels, or if the pixel format is incompatible etc... */
 	
-	materials[0].color &= 0xFFFFFF;
+	for( m=0; m<64; m++ )
+	{
+		uint32 pixel = *(uint32*)( (uint8*) s->pixels + s->format->BytesPerPixel * m );
+		const unsigned b = pixel & 0xFF;
+		const unsigned g = pixel >> 8 & 0xFF;
+		const unsigned r = pixel >> 16 & 0xFF;
+		
+		materials_rgb[m][0] = pow( r / 255.0f, gamma );
+		materials_rgb[m][1] = pow( g / 255.0f, gamma );
+		materials_rgb[m][2] = pow( b / 255.0f, gamma );
+		
+		materials[m].color = SDL_MapRGB( format, r, g, b );
+	}
 	
 	SDL_UnlockSurface( s );
 	SDL_FreeSurface( s );
@@ -410,8 +411,8 @@ int main( int argc, char **argv )
 	}
 	
 	signal( SIGINT, quit );
-	load_materials();
 	resize( resx, resy, 0 );
+	load_materials( screen->format );
 	
 	printf( "Render resolution: %dx%d (%dx%d)\n", resx, resy, (int) render_resx, (int) render_resy );
 	printf( "Rendering threads: %d\n", n_threads );
