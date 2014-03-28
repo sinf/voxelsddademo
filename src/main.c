@@ -320,7 +320,7 @@ static void load_materials( void )
 	printf( "Ok\n" );
 }
 
-void blit2x( uint32 *dst, uint32 *src, size_t w, size_t h, size_t dst_pitch )
+static void blit2x( uint32 *dst, uint32 *src, size_t w, size_t h, size_t dst_pitch )
 {
 	float *dst0, *dst1;
 	size_t y, x;

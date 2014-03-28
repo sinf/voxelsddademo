@@ -46,24 +46,39 @@ static void clear_normals( Octree *oc )
 	memset( oc->nor_density, 0, b * sizeof oc->nor_density[0] );
 }
 
+static uint64 get_morton_code( uint64 x, uint64 y, uint64 z )
+{
+	uint64 a = 0;
+	int s;
+	for( s=0; s<21; s++ ) {
+		a |= ( x & 1 ) << ( s + 2 );
+		a |= ( y & 1 ) << ( s + 1 );
+		a |= ( z & 1 ) << s;
+		x >>= 1;
+		y >>= 1;
+		z >>= 1;
+	}
+	a |= ( z & 1 ) << 21; /* the last available bit */
+	return a;
+}
+
 void set_voxel_normal( Octree *oc, unsigned x, unsigned y, unsigned z, float nx, float ny, float nz )
 {
-	size_t bx, by, bz;
-	size_t b;
-	size_t nbx;
+	unsigned bx, by, bz;
+	uint64 b;
+	/* uint64 nbx; */
 	float *nors;
 	float *p;
 	
 	bx = x / NOR_BRICK_S;
 	by = y / NOR_BRICK_S;
 	bz = z / NOR_BRICK_S;
-	
 	x %= NOR_BRICK_S;
 	y %= NOR_BRICK_S;
 	z %= NOR_BRICK_S;
 	
-	nbx = oc->nor_bricks_x;
-	b = bx * nbx * nbx + by * nbx + bz;
+	/* nbx = oc->nor_bricks_x; */
+	b = get_morton_code( bx, by, bz );
 	nors = oc->nor_bricks[b];
 	
 	if ( nx == ny && ny == nz && nz == 0.0f && oc->nor_density[b] ) {
@@ -86,29 +101,21 @@ void set_voxel_normal( Octree *oc, unsigned x, unsigned y, unsigned z, float nx,
 	p[2] = nz;
 }
 
-void get_voxel_normal( Octree const *oc, unsigned x, unsigned y, unsigned z, float *nx, float *ny, float *nz )
+void get_voxel_normal( Octree const *oc, uint64 voxel_index, float *nx, float *ny, float *nz )
 {
-	size_t bx, by, bz, nbx, b;
-	float *nors;
+	uint64 b, c;
 	float *n;
 	
-	bx = x / NOR_BRICK_S;
-	by = y / NOR_BRICK_S;
-	bz = z / NOR_BRICK_S;
-	x %= NOR_BRICK_S;
-	y %= NOR_BRICK_S;
-	z %= NOR_BRICK_S;
+	b = voxel_index / NOR_BRICK_S3;
+	c = voxel_index % NOR_BRICK_S3;
+	n = oc->nor_bricks[b];
 	
-	nbx = oc->nor_bricks_x;
-	b = bx * nbx * nbx + by * nbx + bz;
-	nors = oc->nor_bricks[b];
-	
-	if ( !nors ) {
-		nx[0] = ny[1] = nz[2] = 0;
+	if ( !n ) {
+		*nx = *ny = *nz = 0;
 		return;
 	}
 	
-	n = nors + x*NOR_BRICK_S2*3 + y*NOR_BRICK_S*3 + z*3;
+	n += 3*c;
 	*nx = n[0];
 	*ny = n[1];
 	*nz = n[2];
