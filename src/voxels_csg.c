@@ -165,8 +165,6 @@ static void calc_sphere_normal( float nor[3], const Sphere *s, float x, float y,
 
 static void calc_box_normal( float nor[3], const aabb3f *box, float x, float y, float z )
 {
-	float xy, xz, yz;
-	
 	x = fabs( x - ( box->min[0] + box->max[0] ) * 0.5f );
 	y = fabs( y - ( box->min[1] + box->max[1] ) * 0.5f );
 	z = fabs( z - ( box->min[2] + box->max[2] ) * 0.5f );

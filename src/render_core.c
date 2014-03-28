@@ -134,18 +134,12 @@ static void translate_vector( void* restrict out_x, void* restrict out_y, void* 
 
 static void normalize_vec( __m128 *x, __m128 *y, __m128 *z )
 {
-	static const float one[] = {1,1,1,1};
 	__m128 xx, yy, zz, sq, inv_sq;
 	xx = _mm_mul_ps( *x, *x );
 	yy = _mm_mul_ps( *y, *y );
 	zz = _mm_mul_ps( *z, *z );
 	sq = _mm_add_ps( xx, _mm_add_ps( yy, zz ) );
-#if 0
-	/* Much less accuracy, slightly faster */
-	inv_sq = _mm_rsqrt_ps( sq );
-#else
-	inv_sq = _mm_div_ps( _mm_load_ps( one ), _mm_sqrt_ps( sq ) );
-#endif
+	inv_sq = _mm_rsqrt_ps( sq ); /* may cause visual artefacts due to low precision */
 	*x = _mm_mul_ps( *x, inv_sq );
 	*y = _mm_mul_ps( *y, inv_sq );
 	*z = _mm_mul_ps( *z, inv_sq );
@@ -261,10 +255,8 @@ static void shade_pixels( size_t start_row, size_t end_row )
 
 static void reconstruct_normals( size_t first_row, size_t end_row, float *ray_dx, float *ray_dy, float *ray_dz, float *depth_p )
 {
-	static const uint32 stored_sign_mask[] = {0x80000000,0x80000000,0x80000000,0x80000000};
 	size_t second_last_row = end_row - 1;
 	size_t y, x, seek;
-	__m128 sign_mask;
 	float *out_nx, *out_ny, *out_nz;
 	
 	seek = first_row * render_resx;
@@ -449,7 +441,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	size_t num_rays = total_pixels;
 	size_t pixel_seek;
 	
-	float *normal_p[3];
 	float *depth_p, *depth_p0;
 	uint8 *mat_p, *mat_p0;
 	
@@ -469,9 +460,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	mat_p = mat_p0;
 	depth_p = depth_p0;
 	
-	for( x=0; x<3; x++ )
-		normal_p[x] = render_output_n[x] + pixel_seek;
-	
 	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz );
 	
 	#if ENABLE_RAY_CAST
@@ -490,7 +478,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		mat_p = mat_p0;
 		depth_p = depth_p0;
 		
-		oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0, normal_p );
+		oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0 );
 	}
 	else
 	{
@@ -501,7 +489,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			{
 				Ray ray;
 				Material_ID mat = 0;
-				float *nor_p[3];
 				
 				ray.o[0] = ray_ox[r];
 				ray.o[1] = ray_oy[r];
@@ -511,11 +498,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				ray.d[1] = ray_dy[r];
 				ray.d[2] = ray_dz[r];
 				
-				nor_p[0] = normal_p[0] + r;
-				nor_p[1] = normal_p[1] + r;
-				nor_p[2] = normal_p[2] + r;
-				
-				oc_traverse( the_volume, &ray, &mat, depth_p, nor_p );
+				oc_traverse( the_volume, &ray, &mat, depth_p );
 				
 				*mat_p++ = mat;
 				depth_p++;
@@ -590,7 +573,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			mat_p = mat_p0;
 			depth_p = depth_p0;
 			
-			oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0, NULL );
+			oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
 			mat_p = mat_p0;
 			
 			for( y=start_row; y<end_row; y++ )
@@ -633,7 +616,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 						ray.d[1] = ray_dy[r];
 						ray.d[2] = ray_dz[r];
 						
-						oc_traverse( the_volume, &ray, &m, &z, NULL );
+						oc_traverse( the_volume, &ray, &m, &z );
 						shadow_m[s] = m;
 					}
 					

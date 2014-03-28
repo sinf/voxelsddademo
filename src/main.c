@@ -118,7 +118,7 @@ static void shoot( int win_x, int win_y, Material_ID m )
 	y = win_y / (float) screen->h * render_resy;
 	
 	get_primary_ray( &ray, &camera, x, y );
-	oc_traverse( the_volume, &ray, &mat, &depth, NULL );
+	oc_traverse( the_volume, &ray, &mat, &depth );
 	
 	if ( mat != 0 )
 	{

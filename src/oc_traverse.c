@@ -14,7 +14,7 @@ int oc_detail_level = 0;
 
 typedef unsigned uint;
 
-void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *out_z, float *out_nor[3] )
+void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *out_z )
 {
 	struct {
 		const OctreeNode *node;
@@ -28,7 +28,7 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 	uint s; /* current stack level */
 	int r; /* loop counter */
 	uint max_level = oc->root_level - oc_detail_level;
-	uint64 voxel_index = 0;
+	/** uint64 voxel_index = 0; **/
 	
 	/* Calculate ray intersection with root node */
 	stack[0].node = &oc->root;
@@ -56,7 +56,7 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 		}
 	}
 	
-	#define POP_STACK { s--; voxel_index>>=3; continue; }
+	#define POP_STACK { s--; /* voxel_index>>=3; */ continue; }
 	
 	/* When s=0 and gets subtracted it will overflow to INT_MAX and loop terminates */
 	for( s=0; s<OCTREE_DEPTH_HARDLIMIT; )
@@ -101,7 +101,9 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 			stack[s].node = parent->children + k;
 			stack[s].n = 0;
 			
+			/*
 			voxel_index = voxel_index << 3 | k;
+			*/
 			
 			for( r=0; r<3; r++ )
 			{
@@ -134,30 +136,6 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 				#endif
 				
 				*out_z = near;
-				
-				if ( out_nor ) {
-					voxel_index <<= 3 * ( max_level - s );
-					get_voxel_normal( oc, voxel_index, out_nor[0], out_nor[1], out_nor[2] );
-					
-					{
-						#if 0
-						uint64 cx, cy, cz;
-						cx = ray->o[0] + near * ray->d[0] + .5f;
-						cy = ray->o[1] + near * ray->d[1] + .5f;
-						cz = ray->o[2] + near * ray->d[2] + .5f;
-						cx %= oc->size;
-						cy %= oc->size;
-						cz %= oc->size;
-						get_voxel_normal( oc, cx, cy, cz, out_nor[0], out_nor[1], out_nor[2] );
-						#endif
-					}
-					/**
-					*out_nor[0] = parent->nor[0];
-					*out_nor[1] = parent->nor[1];
-					*out_nor[2] = parent->nor[2];
-					**/
-				}
-				
 				return;
 			}
 			
@@ -167,10 +145,6 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 	
 	*out_m = 0;
 	*out_z = FLT_MAX;
-	
-	if ( out_nor ) {
-		*out_nor[0] = *out_nor[1] = *out_nor[2] = 0;
-	}
 }
 
 #endif
