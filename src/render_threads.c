@@ -45,7 +45,6 @@ static void *render_thread_func( void *p )
 	
 	start_row = self->id * render_resy / num_render_threads;
 	end_row = ( self->id + 1 ) * render_resy / num_render_threads;
-	printf( "Thread %d: Initializing.. got scanlines %u ... %u\n", self->id, (unsigned) start_row, (unsigned) end_row );
 	ray_buffer_size = 6 * sizeof( float ) * ( end_row - start_row ) * render_resx;
 	ray_buffer = aligned_alloc( 16, ray_buffer_size );
 	if ( !ray_buffer ) {
@@ -99,7 +98,6 @@ static void *render_thread_func( void *p )
 		}
 	}
 	
-	printf( "Thread %d: Terminated\n", self->id );
 	free( ray_buffer );
 	return NULL;
 }
@@ -113,16 +111,12 @@ void stop_render_threads( void )
 		return;
 	}
 	
-	printf( "Stopping renderer threads...\n" );
-	
 	render_state = R_EXIT;
 	mutex_unlock( &render_state_mutex );
 	
 	/* Wait until all threads have terminated */
 	for( n=0; n<num_render_threads; n++ )
 		thread_join( threads[n].thread );
-	
-	printf( "Threads terminated as expected\n" );
 	
 	num_render_threads = 0;
 	memset( (void*) threads, 0, sizeof(threads) );
@@ -149,8 +143,6 @@ void start_render_threads( int count )
 		/* Clean up the old threads before creating new ones */
 		stop_render_threads();
 	}
-	
-	printf( "Starting renderer threads... (%d)\n", count );
 	
 	num_render_threads = count;
 	render_state = R_RENDER;

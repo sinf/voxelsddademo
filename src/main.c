@@ -41,7 +41,7 @@ static int mouse_y = 0;
 
 static SDL_Surface *screen = NULL;
 static int benchmark_mode = 0;
-static int do_upscale_2x = 0;
+static int upscale_shift = 0;
 
 static void quit( /* any number of arguments */ )
 {
@@ -67,7 +67,7 @@ static void resize( int w, int h, int extra_flags )
 		exit(0);
 	}
 	
-	resize_render_output( w >> do_upscale_2x, h >> do_upscale_2x );
+	resize_render_output( w >> upscale_shift, h >> upscale_shift );
 }
 
 static void setup_test_scene( Octree *volume )
@@ -205,32 +205,6 @@ void process_input( int screen_centre_x, int screen_centre_y )
 	update_camera_matrix( &camera );
 	move_camera_local( &camera, motion );
 }
-
-#if 0
-float dot_product4( const vec3f a, const vec3f b )
-{
-	float dot = 0.0f;
-	int n;
-	
-	for( n=0; n<3; n++ )
-		dot += a[n] * b[n];
-	
-	return dot;
-}
-
- void multiply_mat4f( mat4f out, const mat4f a, const mat4f b )
-{
-	int n;
-	for( n=0; n<4; n++ )
-	{
-		const float *b1 = b + 4*n;
-		out[n] = dot_product4( a, b1 );
-		out[3+n] = dot_product4( a+3, b1 );
-		out[6+n] = dot_product4( a+6, b1 );
-		out[9+n] = dot_product4( a+9, b1 );
-	}
-}
-#endif
 
 static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 {
@@ -594,8 +568,8 @@ int main( int argc, char **argv )
 							enable_phong = !enable_phong;
 							break;
 						case SDLK_u:
-							do_upscale_2x = !do_upscale_2x;
-							resize_render_output( ( screen->w & ~0xF ) >> do_upscale_2x, screen->h >> do_upscale_2x );
+							upscale_shift = !upscale_shift;
+							resize_render_output( ( screen->w & ~0xF ) >> upscale_shift, screen->h >> upscale_shift );
 							break;
 						
 						case SDLK_ESCAPE:
@@ -629,7 +603,7 @@ int main( int argc, char **argv )
 		
 		/* Put the previous frame on screen */
 		SDL_LockSurface( screen );
-		if ( do_upscale_2x )
+		if ( upscale_shift )
 			blit2x( screen->pixels, render_output_rgba, render_resx, render_resy, screen->pitch );
 		else
 			memcpy( screen->pixels, render_output_rgba, render_resx*render_resy*4 );
