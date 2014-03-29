@@ -11,6 +11,7 @@ typedef struct {
 	Sint64 unit_size; /* How large integer value corresponds to 1.0. Must be at least 1000 when show_fraction is nonzero */
 	int show_fraction;
 	int sp; /* next sample position in the cyclic sample buffer */
+	Sint64 total; /* total value of all buffered samples */
 	Sint64 min, max;
 	Sint64 samples[MAX_GRAPH_W];
 } Graph;
