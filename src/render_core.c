@@ -25,7 +25,7 @@ Material materials[NUM_MATERIALS];
 float materials_rgb[NUM_MATERIALS][4];
 
 int enable_shadows = 0;
-int enable_phong = 0;
+int enable_phong = 1;
 int show_normals = 0;
 
 static float screen_uv_scale[2];
@@ -151,6 +151,16 @@ static void normalize_vec( __m128 *px, __m128 *py, __m128 *pz )
 	*pz = _mm_mul_ps( z, t );
 }
 
+static void reflect( __m128 vx[1], __m128 vy[1], __m128 vz[1], __m128 nx, __m128 ny, __m128 nz )
+{
+	__m128 x=*vx, y=*vy, z=*vz, t, a, b, c;
+	t = dot_prod( x, y, z, nx, ny, nz );
+	t = _mm_add_ps( t, t );
+	*vx = _mm_sub_ps( _mm_mul_ps( nx, t ), x );
+	*vy = _mm_sub_ps( _mm_mul_ps( ny, t ), y );
+	*vz = _mm_sub_ps( _mm_mul_ps( nz, t ), z );
+}
+
 static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_mat_p )
 {
 	static const uint32 stored_shade_bits[] = {0x20202020, 0x20202020, 0x20202020, 0x20202020};
@@ -191,11 +201,21 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 		}
 		else
 		{
-			if ( enable_phong )
+			if ( !enable_phong )
 			{
-				__m128 lx, ly, lz, max_byte;
-				__m128 ldif[3];
-				__m128 eye_x, eye_y, eye_z;
+				for( x=0; x<render_resx; x++,mat_p++,out_p++ )
+					*out_p = materials[*mat_p].color;
+			}
+			else
+			{
+				__m128
+				lx, ly, lz,
+				max_byte,
+				ldif[3], lamb;
+				
+				#if ENABLE_SPECULAR_TERM
+				__m128 lspec[3], eye_x, eye_y, eye_z;
+				#endif
 				
 				max_byte = _mm_set1_ps( 255 );
 				
@@ -205,24 +225,33 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 				lz = _mm_load_ps( light_z );
 				
 				/* Light diffuse reflection constants */
-				ldif[0] = _mm_set1_ps( 1 );
-				ldif[1] = _mm_set1_ps( 1 );
-				ldif[2] = _mm_set1_ps( 1 );
+				ldif[0] = ldif[1] = ldif[2] = _mm_set1_ps( 1.0 );
 				
+				#if ENABLE_SPECULAR_TERM
+				/* Light specular constants */
+				lspec[0] = lspec[1] = lspec[2] = _mm_set1_ps( 1.0 );
 				eye_x = _mm_set1_ps( camera.pos[0] * the_volume->size );
 				eye_y = _mm_set1_ps( camera.pos[1] * the_volume->size );
 				eye_z = _mm_set1_ps( camera.pos[2] * the_volume->size );
+				#endif
+				
+				/* Ambient term. Note: not the same thing as in Phong reflection model */
+				lamb = _mm_set1_ps( 0.2 );
 				
 				for( x=0; x<render_resx; x+=4 )
 				{
-					__m128 nor_x, nor_y, nor_z;
-					__m128 vx, vy, vz;
-					__m128 tlx, tly, tlz;
-					__m128 tex, tey, tez;
-					__m128 d;
-					__m128 mat_dif[4];
-					__m128i colors;
 					int k;
+					__m128i colors;
+					__m128
+					nor_x, nor_y, nor_z,
+					vx, vy, vz,
+					tlx, tly, tlz,
+					d, s,
+					mat_dif[4];
+					
+					#if ENABLE_SPECULAR_TERM
+					__m128 tex, tey, tez, refx, refy, refz;
+					#endif
 					
 					/* Compute vector to light */
 					tlx = _mm_sub_ps( lx, _mm_load_ps( wox ) );
@@ -230,19 +259,38 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					tlz = _mm_sub_ps( lz, _mm_load_ps( woz ) );
 					normalize_vec( &tlx, &tly, &tlz );
 					
-					/* Vector to eye */
-					tex = _mm_sub_ps( eye_x, _mm_load_ps( wox ) );
-					tey = _mm_sub_ps( eye_y, _mm_load_ps( woy ) );
-					tez = _mm_sub_ps( eye_z, _mm_load_ps( woz ) );
-					
 					/* Get world space normal vector */
 					nor_x = _mm_load_ps( nx );
 					nor_y = _mm_load_ps( ny );
 					nor_z = _mm_load_ps( nz );
 					
+					#if ENABLE_SPECULAR_TERM
+					/* Vector to eye */
+					tex = _mm_sub_ps( eye_x, _mm_load_ps( wox ) );
+					tey = _mm_sub_ps( eye_y, _mm_load_ps( woy ) );
+					tez = _mm_sub_ps( eye_z, _mm_load_ps( woz ) );
+					normalize_vec( &tex, &tey, &tez );
+					
+					/* Reflect by normal */
+					refx = tex;
+					refy = tey;
+					refz = tez;
+					reflect( &refx, &refy, &refz, nor_x, nor_y, nor_z );
+					
+					/* Then the specular term */
+					s = dot_prod( tex, tey, tez, refx, refy, refz );
+					s = _mm_max_ps( _mm_setzero_ps(), s );
+					
+					/* Hard coded specular exponent = 12 */
+					s = _mm_mul_ps( _mm_mul_ps( s, s ), _mm_mul_ps( s, s ) );
+					s = _mm_mul_ps( _mm_mul_ps( s, s ), _mm_mul_ps( s, s ) );
+					s = _mm_mul_ps( _mm_mul_ps( s, s ), _mm_mul_ps( s, s ) );
+					#endif
+					
 					/* Dot product of the diffuse term */
 					d = dot_prod( nor_x, nor_y, nor_z, tlx, tly, tlz );
 					d = _mm_max_ps( _mm_setzero_ps(), d );
+					d = _mm_add_ps( d, lamb ); /* ambient term */
 					
 					/* Gather material diffuse parameters */
 					for( k=0; k<4; k++ ) mat_dif[k] = _mm_load_ps( materials_rgb[mat_p[k]] );
@@ -255,16 +303,21 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 						__m128 r;
 						__m128i i;
 						
-						r = mat_dif[k];
+						/* Diffuse term */
+						r = _mm_mul_ps( mat_dif[k], _mm_mul_ps( ldif[k], d ) );
 						
-						/* Compute diffuse term */
-						r = _mm_mul_ps( r, _mm_mul_ps( ldif[k], d ) );
+						#if ENABLE_SPECULAR_TERM
+						/* Add specular term (todo: material specular parameters) */
+						r = _mm_add_ps( _mm_mul_ps( s, lspec[k] ), r );
+						#endif
 						
 						/* Gamma correction. sqrt is equivalent to pow(value,1/gamma) when gamma==2.0 */
 						r = _mm_sqrt_ps( r );
 						
 						/* Convert to byte and pack RGB */
-						i = _mm_cvtps_epi32( _mm_mul_ps( r, max_byte ) );
+						r = _mm_mul_ps( r, max_byte );
+						r = _mm_min_ps( r, max_byte );
+						i = _mm_cvtps_epi32( r );
 						colors = _mm_slli_epi32( colors, 8 );
 						colors = _mm_or_si128( colors, i );
 					}
@@ -281,21 +334,6 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					
 					out_p += 4;
 					mat_p += 4;
-				}
-			}
-			else
-			{
-				for( x=0; x<render_resx; x++,mat_p++,out_p++ )
-				{
-					#if 0
-					int m = *mat_p;
-					int r = materials_r[m];
-					int g = materials_g[m];
-					int b = materials_b[m];
-					*out_p = r << 16 | g << 8 | b;
-					#else
-					*out_p = materials[*mat_p].color;
-					#endif
 				}
 			}
 		}
