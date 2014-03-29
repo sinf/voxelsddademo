@@ -10,8 +10,6 @@
 #include "render_threads.h"
 #include "mm_math.c"
 
-#define ENABLE_RAYCAST 0
-
 Octree *the_volume = NULL;
 Camera camera;
 
@@ -23,7 +21,8 @@ static uint32 *render_output_write = NULL;
 uint32 *render_output_rgba = NULL;
 
 Material materials[NUM_MATERIALS];
-float materials_rgb[NUM_MATERIALS][4];
+float materials_diff[NUM_MATERIALS][4];
+float materials_spec[NUM_MATERIALS][4];
 
 int enable_shadows = 0;
 int enable_phong = 1;
@@ -130,15 +129,15 @@ static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_m
 }
 
 /* 1 thread, 2000x1000, takes about 20 ms per frame */
-static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *woy, float *woz )
+static void shade_pixels( size_t start_row, size_t end_row, float *wox_p, float *woy_p, float *woz_p )
 {
 	size_t seek = start_row * render_resx;
 	size_t x, y;
 	uint8 *mat_p = render_output_m + seek;
 	uint32 *out_p = render_output_write + seek;
-	float *nx = render_output_n[0] + seek;
-	float *ny = render_output_n[1] + seek;
-	float *nz = render_output_n[2] + seek;
+	float *nx_p = render_output_n[0] + seek;
+	float *ny_p = render_output_n[1] + seek;
+	float *nz_p = render_output_n[2] + seek;
 	
 	for( y=start_row; y<end_row; y++ )
 	{
@@ -148,17 +147,17 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 			for( x=0; x<render_resx; x+=4 )
 			{
 				__m128i r, g, b, rgb;
-				r = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( nx ), byte_half ), byte_half ) );
-				g = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( ny ), byte_half ), byte_half ) );
-				b = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( nz ), byte_half ), byte_half ) );
+				r = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( nx_p ), byte_half ), byte_half ) );
+				g = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( ny_p ), byte_half ), byte_half ) );
+				b = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( nz_p ), byte_half ), byte_half ) );
 				r = _mm_slli_si128( r, 2 );
 				g = _mm_slli_si128( g, 1 );
 				rgb = _mm_or_si128( g, _mm_or_si128( r, b ) );
 				_mm_store_si128( (void*) out_p, rgb );
 				out_p+=4;
-				nx+=4;
-				ny+=4;
-				nz+=4;
+				nx_p+=4;
+				ny_p+=4;
+				nz_p+=4;
 			}
 		}
 		else
@@ -170,15 +169,13 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 			}
 			else
 			{
-				#define ENABLE_SPECULAR_TERM 0
-				
 				__m128
 				lx, ly, lz,
 				max_byte,
 				ldif, lamb;
 				
 				#if ENABLE_SPECULAR_TERM
-				__m128 lspec[3], eye_x, eye_y, eye_z;
+				__m128 lspec, eye_x, eye_y, eye_z;
 				#endif
 				
 				max_byte = _mm_set1_ps( 255 );
@@ -188,12 +185,12 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 				ly = _mm_load_ps( light_y );
 				lz = _mm_load_ps( light_z );
 				
-				/* Light diffuse reflection constant. Could use 3 constants for colored light */
+				/* Light diffuse reflection constant. Could use 3 components for colored light */
 				ldif = _mm_set1_ps( 1.0 );
 				
 				#if ENABLE_SPECULAR_TERM
 				/* Light specular constants */
-				lspec[0] = lspec[1] = lspec[2] = _mm_set1_ps( 1.0 );
+				lspec = _mm_set1_ps( 1.0 ); /* could use 3 components instead of 1 */
 				eye_x = _mm_set1_ps( camera.pos[0] * the_volume->size );
 				eye_y = _mm_set1_ps( camera.pos[1] * the_volume->size );
 				eye_z = _mm_set1_ps( camera.pos[2] * the_volume->size );
@@ -207,70 +204,83 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					int k;
 					__m128i colors;
 					__m128
-					nor_x, nor_y, nor_z,
-					tlx, tly, tlz, tl_inv_len,
-					d,
+					wx, wy, wz, /* world space pixel position */
+					nx, ny, nz, /* world space surface normal */
+					tlx, tly, tlz, /* vector to light */
+					tl_norm,
+					/*hx, hy, hz, * halfway vector between to-light vector and to-eye vector */
+					d, /* diffuse term */
 					mat_dif[4];
 					
 					#if ENABLE_SPECULAR_TERM
-					__m128 tex, tey, tez, refx, refy, refz, s;
+					__m128 tex, tey, tez, refx, refy, refz, s, mat_spec[4];
 					#endif
 					
-					/* Compute vector to light (unnormalized) */
-					tlx = _mm_sub_ps( lx, _mm_load_ps( wox ) );
-					tly = _mm_sub_ps( ly, _mm_load_ps( woy ) );
-					tlz = _mm_sub_ps( lz, _mm_load_ps( woz ) );
-					tl_inv_len = _mm_rsqrt_ps( vec_len_squared( tlx, tly, tlz ) );
+					/* World space pixel position */
+					wx = _mm_load_ps( wox_p );
+					wy = _mm_load_ps( woy_p );
+					wz = _mm_load_ps( woz_p );
+					wox_p += 4;
+					woy_p += 4;
+					woz_p += 4;
 					
-					/* Get world space normal vector (normalized with bad precision) */
-					nor_x = _mm_load_ps( nx );
-					nor_y = _mm_load_ps( ny );
-					nor_z = _mm_load_ps( nz );
+					/* Compute vector to light (unnormalized!) */
+					tlx = _mm_sub_ps( lx, wx );
+					tly = _mm_sub_ps( ly, wy );
+					tlz = _mm_sub_ps( lz, wz );
+					tl_norm = _mm_rsqrt_ps( vec_len_squared( tlx, tly, tlz ) );
+					/** normalize_vec( &tlx, &tly, &tlz, tlx, tly, tlz ); **/
+					
+					/* Get world space normal vector */
+					nx = _mm_load_ps( nx_p );
+					ny = _mm_load_ps( ny_p );
+					nz = _mm_load_ps( nz_p );
+					nx_p += 4;
+					ny_p += 4;
+					nz_p += 4;
+					
+					/* Dot product of the diffuse term */
+					d = dot_prod( nx, ny, nz, tlx, tly, tlz );
+					d = _mm_mul_ps( d, tl_norm ); /* normalize */
 					
 					#if ENABLE_SPECULAR_TERM
-					/* Vector to eye (unnormalized!) */
-					tex = _mm_sub_ps( eye_x, _mm_load_ps( wox ) );
-					tey = _mm_sub_ps( eye_y, _mm_load_ps( woy ) );
-					tez = _mm_sub_ps( eye_z, _mm_load_ps( woz ) );
 					
-					/* Reflect by normal */
-					refx = tex;
-					refy = tey;
-					refz = tez;
-					reflect( &refx, &refy, &refz, nor_x, nor_y, nor_z );
+					/* Vector to eye */
+					tex = _mm_sub_ps( eye_x, wx );
+					tey = _mm_sub_ps( eye_y, wy );
+					tez = _mm_sub_ps( eye_z, wz );
+					normalize_vec( &tex, &tey, &tez, tex, tey, tez );
+					
+					#error tlx,tly,tlz not normalized
+					hx = _mm_add_ps( tlx, tex );
+					hy = _mm_add_ps( tly, tey );
+					hz = _mm_add_ps( tlz, tez );
+					normalize_vec( &hx, &hy, &hz, hx, hy, hz );
 					
 					/* Then the specular term */
-					s = dot_prod( tex, tey, tez, refx, refy, refz );
-					#if 1
-					/* Normalize */
-					s = _mm_div_ps( s, _mm_sqrt_ps(
-						_mm_mul_ps(
-							vec_len_squared( tex, tey, tez ),
-							vec_len_squared( refx, refy, refz ))
-						)
-					);
-					#else
-					/* Normalize, assuming that the lengths of the 2 vectors are equal */
-					s = _mm_div_ps( s, vec_len_squared( tex, tey, tez ) );
-					#endif
+					s = dot_prod( nx, ny, nz, hx, hy, hz );
 					s = _mm_max_ps( _mm_setzero_ps(), s );
+					s = _mm_and_ps( s, _mm_cmpgt_ps( d, _mm_setzero_ps() ) ); /* only include specular term when diffuse term is + */
+					
+					for( k=0; k<4; k++ ) mat_spec[k] = _mm_load_ps( materials_spec[mat_p[k]] );
+					_MM_TRANSPOSE4_PS( mat_spec[0], mat_spec[1], mat_spec[2], mat_spec[3] );
+					
+					/* now mat_spec[3] has the specular exponent
+					todo: use it */
 					
 					/* Hard coded specular exponent */
 					for( k=0; k<10; k++ )
 						s = _mm_mul_ps( s, s );
+					
 					#endif
 					
-					/* Dot product of the diffuse term */
-					d = dot_prod( nor_x, nor_y, nor_z, tlx, tly, tlz );
-					d = _mm_mul_ps( d, tl_inv_len ); /* normalize */
-					d = _mm_max_ps( _mm_setzero_ps(), d );
-					d = _mm_add_ps( d, lamb ); /* ambient term */
-					
 					/* Gather material diffuse parameters */
-					for( k=0; k<4; k++ ) mat_dif[k] = _mm_load_ps( materials_rgb[mat_p[k]] );
+					for( k=0; k<4; k++ ) mat_dif[k] = _mm_load_ps( materials_diff[mat_p[k]] );
 					_MM_TRANSPOSE4_PS( mat_dif[0], mat_dif[1], mat_dif[2], mat_dif[3] );
 					
-					colors = _mm_setzero_si128();
+					d = _mm_max_ps( _mm_setzero_ps(), d ); /* clamp dot product */
+					d = _mm_add_ps( d, lamb ); /* ambient term */
+					colors = _mm_setzero_si128(); /* accumulate bytes into this register */
 					
 					for( k=0; k<3; k++ )
 					{
@@ -282,11 +292,13 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 						
 						#if ENABLE_SPECULAR_TERM
 						/* Add specular term (todo: material specular parameters) */
-						r = _mm_add_ps( _mm_mul_ps( s, lspec[k] ), r );
+						r = _mm_add_ps( _mm_mul_ps( s, _mm_mul_ps( mat_spec[k], lspec ) ), r );
 						#endif
 						
+						#if ENABLE_GAMMA_CORRECTION
 						/* Gamma correction. sqrt is equivalent to pow(value,1/gamma) when gamma==2.0 */
 						r = _mm_sqrt_ps( r );
+						#endif
 						
 						/* Convert to byte and pack RGB */
 						r = _mm_mul_ps( r, max_byte );
@@ -297,14 +309,6 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					}
 					
 					_mm_store_si128( (void*) out_p, colors );
-					
-					wox += 4;
-					woy += 4;
-					woz += 4;
-					
-					nx += 4;
-					ny += 4;
-					nz += 4;
 					
 					out_p += 4;
 					mat_p += 4;
