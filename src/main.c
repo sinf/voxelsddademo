@@ -212,13 +212,13 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 		{0,0,MAX_GRAPH_W,80},
 		{255,255,255},{255,0,0},
 		1000000,1,
-		0,0,0,{0}
+		0,0,0,0,{0}
 	};
 	static Graph graph2 = {
 		{0,0,MAX_GRAPH_W,80},
 		{255,255,255},{0,255,0},
 		1000,0,
-		0,0,0,{0}
+		0,0,0,0,{0}
 	};
 	char buf[256];
 	
@@ -264,7 +264,7 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	graph.bounds.y = 50;
 	
 	graph2.bounds.x = surf->w - graph2.bounds.w - 3;
-	graph2.bounds.y = graph.bounds.y + graph.bounds.h + 50;
+	graph2.bounds.y = graph.bounds.y + graph.bounds.h + 60;
 	
 	update_graph( &graph, perf.rays_per_sec );
 	update_graph( &graph2, perf.frame_time );
@@ -273,6 +273,12 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	
 	draw_text( surf, graph.bounds.x - 5 * GLYPH_W, graph.bounds.y - 2*GLYPH_H, "M Rays/sec" );
 	draw_text( surf, graph2.bounds.x - 3 * GLYPH_W, graph2.bounds.y - 2*GLYPH_H, "ms/frame" );
+	
+	draw_text_f( surf, graph.bounds.x - 2 * GLYPH_W, graph.bounds.y + graph.bounds.h + 5,
+		"Avg: %-d", (unsigned)( ( graph.total / graph.bounds.w + 500000 )/ 1000000 ) );
+	
+	draw_text_f( surf, graph2.bounds.x - GLYPH_W, graph2.bounds.y + graph2.bounds.h + 5,
+		"Avg: %-d", (unsigned)( ( graph2.total / graph2.bounds.w + 500 ) / 1000 ) );
 }
 
 static void load_materials( SDL_PixelFormat *format )

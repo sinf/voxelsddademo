@@ -166,10 +166,12 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 			}
 			else
 			{
+				#define ENABLE_SPECULAR_TERM 0
+				
 				__m128
 				lx, ly, lz,
 				max_byte,
-				ldif[3], lamb;
+				ldif, lamb;
 				
 				#if ENABLE_SPECULAR_TERM
 				__m128 lspec[3], eye_x, eye_y, eye_z;
@@ -182,8 +184,8 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 				ly = _mm_load_ps( light_y );
 				lz = _mm_load_ps( light_z );
 				
-				/* Light diffuse reflection constants */
-				ldif[0] = ldif[1] = ldif[2] = _mm_set1_ps( 1.0 );
+				/* Light diffuse reflection constant. Could use 3 constants for colored light */
+				ldif = _mm_set1_ps( 1.0 );
 				
 				#if ENABLE_SPECULAR_TERM
 				/* Light specular constants */
@@ -202,7 +204,7 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					__m128i colors;
 					__m128
 					nor_x, nor_y, nor_z,
-					tlx, tly, tlz,
+					tlx, tly, tlz, tl_inv_len,
 					d,
 					mat_dif[4];
 					
@@ -210,23 +212,22 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					__m128 tex, tey, tez, refx, refy, refz, s;
 					#endif
 					
-					/* Compute vector to light */
+					/* Compute vector to light (unnormalized) */
 					tlx = _mm_sub_ps( lx, _mm_load_ps( wox ) );
 					tly = _mm_sub_ps( ly, _mm_load_ps( woy ) );
 					tlz = _mm_sub_ps( lz, _mm_load_ps( woz ) );
-					normalize_vec( &tlx, &tly, &tlz, tlx, tly, tlz );
+					tl_inv_len = _mm_rsqrt_ps( vec_len_squared( tlx, tly, tlz ) );
 					
-					/* Get world space normal vector */
+					/* Get world space normal vector (normalized with bad precision) */
 					nor_x = _mm_load_ps( nx );
 					nor_y = _mm_load_ps( ny );
 					nor_z = _mm_load_ps( nz );
 					
 					#if ENABLE_SPECULAR_TERM
-					/* Vector to eye */
+					/* Vector to eye (unnormalized!) */
 					tex = _mm_sub_ps( eye_x, _mm_load_ps( wox ) );
 					tey = _mm_sub_ps( eye_y, _mm_load_ps( woy ) );
 					tez = _mm_sub_ps( eye_z, _mm_load_ps( woz ) );
-					normalize_vec( &tex, &tey, &tez );
 					
 					/* Reflect by normal */
 					refx = tex;
@@ -236,16 +237,28 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					
 					/* Then the specular term */
 					s = dot_prod( tex, tey, tez, refx, refy, refz );
+					#if 1
+					/* Normalize */
+					s = _mm_div_ps( s, _mm_sqrt_ps(
+						_mm_mul_ps(
+							vec_len_squared( tex, tey, tez ),
+							vec_len_squared( refx, refy, refz ))
+						)
+					);
+					#else
+					/* Normalize, assuming that the lengths of the 2 vectors are equal */
+					s = _mm_div_ps( s, vec_len_squared( tex, tey, tez ) );
+					#endif
 					s = _mm_max_ps( _mm_setzero_ps(), s );
 					
-					/* Hard coded specular exponent = 12 */
-					s = _mm_mul_ps( _mm_mul_ps( s, s ), _mm_mul_ps( s, s ) );
-					s = _mm_mul_ps( _mm_mul_ps( s, s ), _mm_mul_ps( s, s ) );
-					s = _mm_mul_ps( _mm_mul_ps( s, s ), _mm_mul_ps( s, s ) );
+					/* Hard coded specular exponent */
+					for( k=0; k<10; k++ )
+						s = _mm_mul_ps( s, s );
 					#endif
 					
 					/* Dot product of the diffuse term */
 					d = dot_prod( nor_x, nor_y, nor_z, tlx, tly, tlz );
+					d = _mm_mul_ps( d, tl_inv_len ); /* normalize */
 					d = _mm_max_ps( _mm_setzero_ps(), d );
 					d = _mm_add_ps( d, lamb ); /* ambient term */
 					
@@ -261,7 +274,7 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 						__m128i i;
 						
 						/* Diffuse term */
-						r = _mm_mul_ps( mat_dif[k], _mm_mul_ps( ldif[k], d ) );
+						r = _mm_mul_ps( mat_dif[k], _mm_mul_ps( ldif, d ) );
 						
 						#if ENABLE_SPECULAR_TERM
 						/* Add specular term (todo: material specular parameters) */
@@ -311,6 +324,8 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 	float const *depth_p,
 	float *wox_p, float *woy_p, float *woz_p )
 {
+	int need_normals = enable_phong;
+	
 	/* prevents self-occlusion for shadow rays */
 	__m128 depth_offset = _mm_set1_ps( 0.9999f );
 	
@@ -325,44 +340,30 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 	
 	for( y=first_row; y<second_last_row; y++ )
 	{
-		__m128 ax0, ay0, az0, lz;
-		
-		ax0 = _mm_load_ss( ray_dx );
-		ay0 = _mm_load_ss( ray_dy );
-		az0 = _mm_load_ss( ray_dz );
-		lz = _mm_load_ss( depth_p );
+		__m128 lax, lay, laz, lz;
+		lax = lay = laz = lz = _mm_setzero_ps();
 		
 		CALC_ROW_NORMALS:
 		for( x=0; x<render_resx; x+=4 )
-		{	
+		{
 			__m128
 			z0, z1, z2,
 			ax, ay, az,
+			ax0, ay0, az0,
 			bx, by, bz,
 			cx, cy, cz,
 			nx, ny, nz;
 			
 			z0 = _mm_load_ps( depth_p );
-			z1 = _mm_move_ss( _mm_shuffle_ps( z0, z0, 0x93 ), lz );
-			z2 = _mm_load_ps( depth_p + render_resx );
 			
-			ax = _mm_load_ps( ray_dx );
-			ay = _mm_load_ps( ray_dy );
-			az = _mm_load_ps( ray_dz );
-			
-			/* Left shift ax,ay,az by 32 bits and put ax0,ay0,az0 into the low 32 bits */
-			bx = _mm_move_ss( _mm_shuffle_ps( ax, ax, 0x93 ), ax0 );
-			by = _mm_move_ss( _mm_shuffle_ps( ay, ay, 0x93 ), ay0 );
-			bz = _mm_move_ss( _mm_shuffle_ps( az, az, 0x93 ), az0 );
-			
-			cx = _mm_load_ps( ray_dx + render_resx );
-			cy = _mm_load_ps( ray_dy + render_resx );
-			cz = _mm_load_ps( ray_dz + render_resx );
+			ax0 = _mm_load_ps( ray_dx );
+			ay0 = _mm_load_ps( ray_dy );
+			az0 = _mm_load_ps( ray_dz );
 			
 			/* compute world space coordinates from ray direction and depth */
-			ax = _mm_mul_ps( ax, z0 );
-			ay = _mm_mul_ps( ay, z0 );
-			az = _mm_mul_ps( az, z0 );
+			ax = _mm_mul_ps( ax0, z0 );
+			ay = _mm_mul_ps( ay0, z0 );
+			az = _mm_mul_ps( az0, z0 );
 			
 			/* save world space position of the pixel for later use */
 			_mm_store_ps( wox_p, _mm_add_ps( _mm_load_ps( wox_p ), _mm_mul_ps( ax, depth_offset ) ) );
@@ -372,40 +373,56 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 			woy_p += 4;
 			woz_p += 4;
 			
-			bx = _mm_mul_ps( bx, z1 );
-			by = _mm_mul_ps( by, z1 );
-			bz = _mm_mul_ps( bz, z1 );
+			if ( need_normals ) {
+				z1 = _mm_move_ss( _mm_shuffle_ps( z0, z0, 0x93 ), lz );
+				z2 = _mm_load_ps( depth_p + render_resx );
+				
+				/* Left shift ax0,ay0,az0 by 32 bits and put lax,lay,laz into the low 32 bits */
+				bx = _mm_move_ss( _mm_shuffle_ps( ax0, ax0, 0x93 ), lax );
+				by = _mm_move_ss( _mm_shuffle_ps( ay0, ay0, 0x93 ), lay );
+				bz = _mm_move_ss( _mm_shuffle_ps( az0, az0, 0x93 ), laz );
+				
+				cx = _mm_load_ps( ray_dx + render_resx );
+				cy = _mm_load_ps( ray_dy + render_resx );
+				cz = _mm_load_ps( ray_dz + render_resx );
 			
-			cx = _mm_mul_ps( cx, z2 );
-			cy = _mm_mul_ps( cy, z2 );
-			cz = _mm_mul_ps( cz, z2 );
-			
-			/* compute vector BA */
-			bx = _mm_sub_ps( ax, bx );
-			by = _mm_sub_ps( ay, by );
-			bz = _mm_sub_ps( az, bz );
-			
-			/* compute vector AC */
-			cx = _mm_sub_ps( cx, ax );
-			cy = _mm_sub_ps( cy, ay );
-			cz = _mm_sub_ps( cz, az );
-			
-			/* cross product: BA x AC */
-			nx = _mm_sub_ps( _mm_mul_ps( by, cz ), _mm_mul_ps( bz, cy ) );
-			ny = _mm_sub_ps( _mm_mul_ps( bz, cx ), _mm_mul_ps( bx, cz ) );
-			nz = _mm_sub_ps( _mm_mul_ps( bx, cy ), _mm_mul_ps( by, cx ) );
-			
-			normalize_vec( out_nx, out_ny, out_nz, nx, ny, nz );
-			
-			/* load_ss doesn't care about alignment. yay!! */
-			ax0 = _mm_load_ss( ray_dx + 3 );
-			ay0 = _mm_load_ss( ray_dy + 3 );
-			az0 = _mm_load_ss( ray_dz + 3 );
-			lz = _mm_load_ss( depth_p + 3 );
-			
-			out_nx += 4;
-			out_ny += 4;
-			out_nz += 4;
+				/* compute world space position of the pixels on the left */
+				bx = _mm_mul_ps( bx, z1 );
+				by = _mm_mul_ps( by, z1 );
+				bz = _mm_mul_ps( bz, z1 );
+				
+				/* compute world space position of the pixels below */
+				cx = _mm_mul_ps( cx, z2 );
+				cy = _mm_mul_ps( cy, z2 );
+				cz = _mm_mul_ps( cz, z2 );
+				
+				/* compute vector BA */
+				bx = _mm_sub_ps( ax, bx );
+				by = _mm_sub_ps( ay, by );
+				bz = _mm_sub_ps( az, bz );
+				
+				/* compute vector AC */
+				cx = _mm_sub_ps( cx, ax );
+				cy = _mm_sub_ps( cy, ay );
+				cz = _mm_sub_ps( cz, az );
+				
+				/* cross product: BA x AC */
+				nx = _mm_sub_ps( _mm_mul_ps( by, cz ), _mm_mul_ps( bz, cy ) );
+				ny = _mm_sub_ps( _mm_mul_ps( bz, cx ), _mm_mul_ps( bx, cz ) );
+				nz = _mm_sub_ps( _mm_mul_ps( bx, cy ), _mm_mul_ps( by, cx ) );
+				
+				normalize_vec( out_nx, out_ny, out_nz, nx, ny, nz );
+				
+				/* load_ss doesn't care about alignment. yay!! */
+				lax = _mm_load_ss( ray_dx + 3 );
+				lay = _mm_load_ss( ray_dy + 3 );
+				laz = _mm_load_ss( ray_dz + 3 );
+				lz = _mm_load_ss( depth_p + 3 );
+				
+				out_nx += 4;
+				out_ny += 4;
+				out_nz += 4;
+			}
 			
 			ray_dx += 4;
 			ray_dy += 4;
@@ -489,82 +506,66 @@ static void generate_primary_rays(
 
 void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
+	const int enable_raycast = 0;
 	const int use_dac_method = 0;
-	
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
 	
 	size_t y, x, r;
 	size_t resx = render_resx;
 	size_t resy = end_row - start_row;
-	size_t num_rays = total_pixels;
+	size_t num_rays;
 	size_t pixel_seek;
 	
-	float *depth_p, *depth_p0;
+	float *depth_p0;
 	uint8 *mat_p, *mat_p0;
 	
-	size_t ray_attr_skip = resx * resy;
-	
+	num_rays = resx * resy;
 	ray_ox = ray_buffer;
-	ray_oy = ray_ox + ray_attr_skip;
-	ray_oz = ray_oy + ray_attr_skip;
-	ray_dx = ray_oz + ray_attr_skip;
-	ray_dy = ray_dx + ray_attr_skip;
-	ray_dz = ray_dy + ray_attr_skip;
+	ray_oy = ray_ox + num_rays;
+	ray_oz = ray_oy + num_rays;
+	ray_dx = ray_oz + num_rays;
+	ray_dy = ray_dx + num_rays;
+	ray_dz = ray_dy + num_rays;
 	
 	/* Initialize pixel pointers */
 	pixel_seek = start_row * render_resx;
 	mat_p0 = render_output_m + pixel_seek;
 	depth_p0 = render_output_z + pixel_seek;
 	mat_p = mat_p0;
-	depth_p = depth_p0;
 	
 	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz );
 	
-	if ( use_dac_method )
-	{
-		const float *o[3], *d[3];
-		
-		o[0] = ray_ox;
-		o[1] = ray_oy;
-		o[2] = ray_oz;
-		
-		d[0] = ray_dx;
-		d[1] = ray_dy;
-		d[2] = ray_dz;
-		
-		mat_p = mat_p0;
-		depth_p = depth_p0;
-		
-		oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0 );
-	}
-	else
-	{
+	num_rays &= ~7;
+	
+	if ( enable_raycast ) {
 		/* Trace primary rays */
-		for( r=0,y=start_row; y<end_row; y++ )
+		if ( use_dac_method )
 		{
-			for( x=0; x<resx; x++,r++ )
+			const float *o[3], *d[3];
+			o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
+			d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
+			oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0 );
+		} else {
+			float *depth_p = depth_p0;
+			for( r=0,y=start_row; y<end_row; y++ )
 			{
-				Ray ray;
-				Material_ID mat = 0;
-				
-				ray.o[0] = ray_ox[r];
-				ray.o[1] = ray_oy[r];
-				ray.o[2] = ray_oz[r];
-				
-				ray.d[0] = ray_dx[r];
-				ray.d[1] = ray_dy[r];
-				ray.d[2] = ray_dz[r];
-				
-				oc_traverse( the_volume, &ray, &mat, depth_p );
-				
-				*mat_p++ = mat;
-				depth_p++;
+				for( x=0; x<resx; x++,r++ )
+				{
+					Ray ray;
+					Material_ID mat = 0;
+					
+					ray.o[0]=ray_ox[r]; ray.o[1]=ray_oy[r]; ray.o[2]=ray_oz[r];
+					ray.d[0]=ray_dx[r]; ray.d[1]=ray_dy[r]; ray.d[2]=ray_dz[r];
+					oc_traverse( the_volume, &ray, &mat, depth_p );
+					
+					*mat_p++ = mat;
+					depth_p++;
+				}
 			}
 		}
 	}
 	
-	/* Fills render_output_n[...] with world space normal vectors
-	and also writes world space position of each pixel to ray_ox/oy/oz */
+	/* Compute surface normals and world space positions */
 	reconstruct_normals( start_row, end_row, ray_dx, ray_dy, ray_dz, depth_p0, ray_ox, ray_oy, ray_oz );
 	
 	if ( enable_shadows )
@@ -577,7 +578,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		lz = _mm_load_ps( light_z );
 		
 		/* Generate shadow rays */
-		depth_p = depth_p0;
 		for( r=0,y=start_row; y<end_row; y++ )
 		{
 			for( x=0; x<resx; x+=4,r+=4 )
@@ -590,72 +590,59 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			}
 		}
 		
-		if ( use_dac_method )
-		{
-			const float *o[3], *d[3];
-			__m128i *shadow_buf = aligned_alloc( sizeof( *shadow_buf ), ( num_rays | 7 ) + 1 );
-			__m128i *shadow_p = shadow_buf;
-			
-			o[0] = ray_ox;
-			o[1] = ray_oy;
-			o[2] = ray_oz;
-			
-			d[0] = ray_dx;
-			d[1] = ray_dy;
-			d[2] = ray_dz;
-			
-			mat_p = mat_p0;
-			depth_p = depth_p0;
-			
-			oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
-			mat_p = mat_p0;
-			
-			for( y=start_row; y<end_row; y++ )
+		if ( enable_raycast ) {
+			if ( use_dac_method )
 			{
-				for( x=0; x<resx; x+=16 )
+				const float *o[3], *d[3];
+				__m128i *shadow_buf = aligned_alloc( 16, num_rays );
+				__m128i *shadow_p = shadow_buf;
+				
+				o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
+				d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
+				oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
+				mat_p = mat_p0;
+				
+				for( y=start_row; y<end_row; y++ )
 				{
-					calc_shadow_mat( mat_p, shadow_p );
-					shadow_p++;
-					mat_p+=16;
-				}
-			}
-			
-			free( shadow_buf );
-		}
-		else
-		{
-			/* Trace shadows */
-			mat_p = mat_p0;
-			for( r=0,y=start_row; y<end_row; y++ )
-			{
-				for( x=0; x<resx; x+=16 )
-				{
-					uint8 shadow_m[16] = {0};
-					int s;
-					
-					for( s=0; s<16; s++,r++ )
+					for( x=0; x<resx; x+=16 )
 					{
-						Ray ray;
-						Material_ID m;
-						float z;
-						
-						if ( mat_p[s] == 0 )
-							continue; /* the sky doesn't receive shadows */
-						
-						ray.o[0] = ray_ox[r];
-						ray.o[1] = ray_oy[r];
-						ray.o[2] = ray_oz[r];
-						
-						ray.d[0] = ray_dx[r];
-						ray.d[1] = ray_dy[r];
-						ray.d[2] = ray_dz[r];
-						
-						oc_traverse( the_volume, &ray, &m, &z );
-						shadow_m[s] = m;
+						calc_shadow_mat( mat_p, shadow_p );
+						shadow_p++;
+						mat_p+=16;
 					}
-					
-					calc_shadow_mat( mat_p, shadow_m );
-					mat_p += 16;
+				}
+				
+				free( shadow_buf );
+			}
+			else
+			{
+				/* Trace shadows */
+				mat_p = mat_p0;
+				for( r=0,y=start_row; y<end_row; y++ )
+				{
+					for( x=0; x<resx; x+=16 )
+					{
+						uint8 shadow_m[16] = {0};
+						int s;
+						
+						for( s=0; s<16; s++,r++ )
+						{
+							Ray ray;
+							Material_ID m;
+							float z;
+							
+							if ( mat_p[s] == 0 )
+								continue; /* the sky doesn't receive shadows */
+							
+							ray.o[0]=ray_ox[r]; ray.o[1]=ray_oy[r]; ray.o[2]=ray_oz[r];
+							ray.d[0]=ray_dx[r]; ray.d[1]=ray_dy[r]; ray.d[2]=ray_dz[r];
+							oc_traverse( the_volume, &ray, &m, &z );
+							shadow_m[s] = m;
+						}
+						
+						calc_shadow_mat( mat_p, shadow_m );
+						mat_p += 16;
+					}
 				}
 			}
 		}

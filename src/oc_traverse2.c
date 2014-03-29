@@ -16,7 +16,9 @@ typedef struct {
 	size_t id;
 } RayParams;
 
-static size_t filter_rays( RayParams out[], RayParams const in[], uint8 const in_rec_mask[], uint8 const in_alive[], size_t num_rays, uint8 rec_mask, int child_id )
+#define DEAD_MASK 0x80
+
+static size_t filter_rays( RayParams out[], RayParams const in[], uint8 const ray_bits[], size_t num_rays, uint8 rec_mask, int child_id )
 {
 	size_t num_out = 0;
 	size_t r;
@@ -26,11 +28,12 @@ static size_t filter_rays( RayParams out[], RayParams const in[], uint8 const in
 		unsigned g;
 		float near, far;
 		size_t id = in[r].id;
+		uint8 bits = ray_bits[id];
 		
-		if ( !in_alive[id] )
+		if ( bits & DEAD_MASK )
 			continue;
 		
-		if ( in_rec_mask[id] != rec_mask )
+		if ( bits != rec_mask )
 			continue;
 		
 		o.id = id;
@@ -70,7 +73,7 @@ static void process_leaf( const OctreeNode *node,
 	int octree_level,
 	size_t num_rays,
 	RayParams const rays[], 
-	uint8 alive[],
+	uint8 ray_bits[],
 	uint8 out_mat[],
 	float out_depth[] )
 {
@@ -98,7 +101,7 @@ static void process_leaf( const OctreeNode *node,
 		id = rays[r].id;
 		out_mat[id] = mat;
 		out_depth[id] = z;
-		alive[id] = 0;
+		ray_bits[id] = DEAD_MASK;
 	}
 }
 
@@ -106,8 +109,7 @@ static void traverse_branch( const OctreeNode *node,
 	int octree_level,
 	size_t ray_count,
 	RayParams const rays[],
-	uint8 const rec_mask[],
-	uint8 alive[],
+	uint8 ray_bits[],
 	uint8 out_mat[],
 	float out_depth[] )
 {
@@ -124,13 +126,13 @@ static void traverse_branch( const OctreeNode *node,
 		{
 			int child_id = m ^ iter;
 			OctreeNode *child = node->children + child_id;
-			size_t rc2 = filter_rays( rays2, rays, rec_mask, alive, ray_count, iter, m /* why m instead of child_id??? */ );
+			size_t rc2 = filter_rays( rays2, rays, ray_bits, ray_count, iter, m /* why m instead of child_id??? */ );
 			if ( !rc2 )
 				continue;
 			if ( !octree_level || !child->children )
-				process_leaf( child, octree_level, rc2, rays2, alive, out_mat, out_depth );
+				process_leaf( child, octree_level, rc2, rays2, ray_bits, out_mat, out_depth );
 			else
-				traverse_branch( child, octree_level, rc2, rays2, rec_mask, alive, out_mat, out_depth );
+				traverse_branch( child, octree_level, rc2, rays2, ray_bits, out_mat, out_depth );
 		}
 	}
 }
@@ -143,22 +145,19 @@ void oc_traverse_dac( const Octree oc[1],
 	float out_depth[] )
 {
 	RayParams *params;
-	uint8 *rec_mask;
-	uint8 *alive;
+	uint8 *ray_bits;
 	size_t r;
 	float aabb_min = 0;
 	float aabb_max = oc->size;
 	
-	params = aligned_alloc( sizeof( __m128 ), ( sizeof( *params ) + sizeof( *rec_mask ) + sizeof( *alive ) ) * ray_count * OCTREE_DEPTH_HARDLIMIT );
-	rec_mask = (uint8*)( params + ray_count );
-	alive = rec_mask + ray_count;
+	params = aligned_alloc( 16, ( sizeof( *params ) + sizeof( *ray_bits ) ) * ray_count * OCTREE_DEPTH_HARDLIMIT );
+	ray_bits = (uint8*)( params + ray_count );
 	
 	for( r=0; r<ray_count; r++ )
 	{
 		int k;
 		int iter = 0;
 		
-		alive[r] = 1;
 		params[r].id = r;
 		
 		for( k=0; k<3; k++ ) {
@@ -181,12 +180,12 @@ void oc_traverse_dac( const Octree oc[1],
 			params[r].tmax[k] = tmax;
 		}
 		
-		rec_mask[r] = iter;
+		ray_bits[r] = iter;
 		out_mat[r] = 0;
 		out_depth[r] = FLT_MAX;
 	}
 	
-	traverse_branch( &oc->root, oc->root_level - oc_detail_level, ray_count, params, rec_mask, alive, out_mat, out_depth );
+	traverse_branch( &oc->root, oc->root_level - oc_detail_level, ray_count, params, ray_bits, out_mat, out_depth );
 	
 	free( params );
 }

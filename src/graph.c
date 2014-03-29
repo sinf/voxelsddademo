@@ -18,13 +18,23 @@ static void find_scale( Graph g[1] )
 
 void update_graph( Graph g[1], Sint64 new_sample )
 {
-	int sp = g->sp;
+	Sint64 old_sample;
+	int sp;
+	
+	sp = g->sp;
 	g->sp = ( sp + 1 ) % g->bounds.w;
+	
+	old_sample = g->samples[sp];
 	g->samples[sp] = new_sample;
+	
+	g->total = g->total - old_sample + new_sample;
+	
 	if ( new_sample > g->max )
 		g->max = new_sample;
+	
 	if ( new_sample < g->min )
 		g->min = new_sample;
+	
 	if ( !( sp & 0x7 ) )
 		find_scale( g );
 }
