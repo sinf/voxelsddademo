@@ -277,7 +277,7 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 
 static void load_materials( SDL_PixelFormat *format )
 {
-	float gamma = 2.0;
+	const float gamma = 2.0;
 	SDL_Surface *s;
 	int m;
 	

@@ -9,9 +9,6 @@
 #include "render_threads.h"
 #include "mm_math.c"
 
-/* Used to prevent self-occlusion */
-#define SHADOW_RAY_DEPTH_OFFSET 0.001f
-
 Octree *the_volume = NULL;
 Camera camera;
 
@@ -278,7 +275,7 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 						r = _mm_mul_ps( r, max_byte );
 						r = _mm_min_ps( r, max_byte );
 						i = _mm_cvtps_epi32( r );
-						colors = _mm_slli_epi32( colors, 8 );
+						colors = _mm_slli_si128( colors, 1 );
 						colors = _mm_or_si128( colors, i );
 					}
 					
@@ -300,10 +297,23 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 	}
 }
 
+/*
+Inputs:
+	wox_p, woy_p, woz_p    Ray origin
+	ray_dx, ray_dy, ray_dz  Ray direction
+	depth_p                       Ray hit depth
+Outputs:
+	render_output_n[0..2]  World space surface normals
+	wox_p, woy_p, woz_p    World space coordinates of ray intersections (=ray origin + ray direction * depth * depth_offset)
+*/
 static void reconstruct_normals( size_t first_row, size_t end_row,
-	float *ray_dx, float *ray_dy, float *ray_dz, float *depth_p,
+	float const *ray_dx, float const *ray_dy, float const *ray_dz,
+	float const *depth_p,
 	float *wox_p, float *woy_p, float *woz_p )
 {
+	/* prevents self-occlusion for shadow rays */
+	__m128 depth_offset = _mm_set1_ps( 0.9999f );
+	
 	size_t second_last_row = end_row - 1;
 	size_t y, x, seek;
 	float *out_nx, *out_ny, *out_nz;
@@ -345,12 +355,6 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 			by = _mm_move_ss( _mm_shuffle_ps( ay, ay, 0x93 ), ay0 );
 			bz = _mm_move_ss( _mm_shuffle_ps( az, az, 0x93 ), az0 );
 			
-			/* load_ss doesn't care about alignment. yay!! */
-			ax0 = _mm_load_ss( ray_dx + 3 );
-			ay0 = _mm_load_ss( ray_dy + 3 );
-			az0 = _mm_load_ss( ray_dz + 3 );
-			lz = _mm_load_ss( depth_p + 3 );
-			
 			cx = _mm_load_ps( ray_dx + render_resx );
 			cy = _mm_load_ps( ray_dy + render_resx );
 			cz = _mm_load_ps( ray_dz + render_resx );
@@ -361,9 +365,9 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 			az = _mm_mul_ps( az, z0 );
 			
 			/* save world space position of the pixel for later use */
-			_mm_store_ps( wox_p, _mm_add_ps( _mm_load_ps( wox_p ), ax ) );
-			_mm_store_ps( woy_p, _mm_add_ps( _mm_load_ps( woy_p ), ay ) );
-			_mm_store_ps( woz_p, _mm_add_ps( _mm_load_ps( woz_p ), az ) );
+			_mm_store_ps( wox_p, _mm_add_ps( _mm_load_ps( wox_p ), _mm_mul_ps( ax, depth_offset ) ) );
+			_mm_store_ps( woy_p, _mm_add_ps( _mm_load_ps( woy_p ), _mm_mul_ps( ay, depth_offset ) ) );
+			_mm_store_ps( woz_p, _mm_add_ps( _mm_load_ps( woz_p ), _mm_mul_ps( az, depth_offset ) ) );
 			wox_p += 4;
 			woy_p += 4;
 			woz_p += 4;
@@ -392,6 +396,12 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 			nz = _mm_sub_ps( _mm_mul_ps( bx, cy ), _mm_mul_ps( by, cx ) );
 			
 			normalize_vec( out_nx, out_ny, out_nz, nx, ny, nz );
+			
+			/* load_ss doesn't care about alignment. yay!! */
+			ax0 = _mm_load_ss( ray_dx + 3 );
+			ay0 = _mm_load_ss( ray_dy + 3 );
+			az0 = _mm_load_ss( ray_dz + 3 );
+			lz = _mm_load_ss( depth_p + 3 );
 			
 			out_nx += 4;
 			out_ny += 4;
@@ -484,7 +494,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
 	
-	__m128 ox, oy, oz;
 	size_t y, x, r;
 	size_t resx = render_resx;
 	size_t resy = end_row - start_row;
@@ -562,8 +571,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	
 	if ( enable_shadows )
 	{
-		__m128 lx, ly, lz, dx, dy, dz;
-		__m128 depth_offset = _mm_set1_ps( SHADOW_RAY_DEPTH_OFFSET );
+		__m128 lx, ly, lz;
 		
 		/* Light origin */
 		lx = _mm_load_ps( light_x );
@@ -576,26 +584,11 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		{
 			for( x=0; x<resx; x+=4,r+=4 )
 			{
-				ox = _mm_load_ps( ray_ox+r );
-				oy = _mm_load_ps( ray_oy+r );
-				oz = _mm_load_ps( ray_oz+r );
-				
-				dx = _mm_sub_ps( lx, ox );
-				dy = _mm_sub_ps( ly, oy );
-				dz = _mm_sub_ps( lz, oz );
-				normalize_vec( &dx, &dy, &dz, dx, dy, dz );
-				
-				ox = _mm_add_ps( ox, _mm_mul_ps( dx, depth_offset ) );
-				oy = _mm_add_ps( oy, _mm_mul_ps( dy, depth_offset ) );
-				oz = _mm_add_ps( oz, _mm_mul_ps( dz, depth_offset ) );
-				
-				_mm_store_ps( ray_dx+r, dx );
-				_mm_store_ps( ray_dy+r, dy );
-				_mm_store_ps( ray_dz+r, dz );
-				
-				_mm_store_ps( ray_ox+r, ox );
-				_mm_store_ps( ray_oy+r, oy );
-				_mm_store_ps( ray_oz+r, oz );
+				__m128 dx, dy, dz;
+				dx = _mm_sub_ps( lx, _mm_load_ps( ray_ox+r ) );
+				dy = _mm_sub_ps( ly, _mm_load_ps( ray_oy+r ) );
+				dz = _mm_sub_ps( lz, _mm_load_ps( ray_oz+r ) );
+				normalize_vec( ray_dx+r, ray_dy+r, ray_dz+r, dx, dy, dz );
 			}
 		}
 		
