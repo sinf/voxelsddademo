@@ -428,8 +428,6 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 	}
 }
 
-#define ENABLE_RAY_CAST 1
-#if 1
 static void generate_primary_rays(
 	size_t resx,
 	size_t start_row,
@@ -488,6 +486,7 @@ static void generate_primary_rays(
 		v = _mm_add_ps( v, dv );
 	}
 }
+
 void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
 	const int use_dac_method = 0;
@@ -521,7 +520,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	
 	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz );
 	
-	#if ENABLE_RAY_CAST
 	if ( use_dac_method )
 	{
 		const float *o[3], *d[3];
@@ -662,106 +660,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			}
 		}
 	}
-	#endif
 	
 	shade_pixels( start_row, end_row, ray_ox, ray_oy, ray_oz );
 }
-#else
-void render_part( size_t start_row, size_t end_row, float *ray_buffer )
-{
-	size_t seek;
-	
-	vec3f ray_origin;
-	Ray ray;
-	size_t x, y;
-	
-	float pixel_w;
-	float pixel_u, pixel_v;
-	float pixel_v_incr;
-	
-	uint8 *mat_p;
-	float *depth_p;
-	float *nor_p[3];
-	
-	(void) ray_buffer;
-	
-	for( x=0; x<PADDED_VEC3_SIZE; x++ )
-	{
-		/* All rays start from the same coordinates */
-		ray_origin[x] = camera.pos[x] * the_volume->size;
-	}
-	
-	/* Precompute ... */
-	pixel_w = calc_raydir_z();
-	pixel_v = screen_uv_min[1] + start_row * screen_uv_scale[1];
-	pixel_v_incr = screen_uv_scale[1];
-	
-	/* Initialize pixel pointers */
-	seek = start_row * render_resx;
-	mat_p = render_output_m + seek;
-	depth_p = render_output_z + seek;
-	nor_p[0] = render_output_n[0] + seek;
-	nor_p[1] = render_output_n[1] + seek;
-	nor_p[2] = render_output_n[2] + seek;
-	
-	for( y=start_row; y<end_row; y++ )
-	{
-		pixel_u = screen_uv_min[0];
-		
-		for( x=0; x<render_resx; x++ )
-		{
-			Material_ID m;
-			
-			memcpy( ray.o, ray_origin, sizeof(ray_origin) );
-			ray.d[0] = pixel_u;
-			ray.d[1] = pixel_v;
-			ray.d[2] = pixel_w;
-			
-			normalize( ray.d );
-			multiply_vec_mat3f( ray.d, camera.eye_to_world, ray.d );
-			
-			#if ENABLE_RAY_CAST
-			oc_traverse( the_volume, &ray, &m, depth_p, nor_p );
-			#endif
-			
-			*mat_p = m;
-			
-			nor_p[0]++;
-			nor_p[1]++;
-			nor_p[2]++;
-			
-			#if ENABLE_RAY_CAST
-			if ( enable_shadows )
-			{
-				/* Shadow ray */
-				float z = *depth_p;
-				int a;
-				
-				/* Avoid self-occlusion */
-				z -= SHADOW_RAY_DEPTH_OFFSET;
-				
-				for( a=0; a<PADDED_VEC3_SIZE; a++ )
-					ray.o[a] = ray.o[a] + ray.d[a] * z;
-				
-				ray.d[0] = light_x[0] - ray.o[0];
-				ray.d[1] = light_y[0] - ray.o[1];
-				ray.d[2] = light_z[0] - ray.o[2];
-				
-				normalize( ray.d );
-				oc_traverse( the_volume, &ray, &m, &z, NULL );
-				
-				if ( m != 0 )
-					*mat_p |= 0x20;
-			}
-			#endif
-			
-			mat_p++;
-			depth_p++;
-			pixel_u += screen_uv_scale[0];
-		}
-		pixel_v += pixel_v_incr;
-	}
-	
-	shade_pixels( start_row, end_row );
-}
-#endif
