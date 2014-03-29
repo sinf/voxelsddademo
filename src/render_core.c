@@ -7,6 +7,7 @@
 #include "oc_traverse2.h"
 #include "render_core.h"
 #include "render_threads.h"
+#include "mm_math.c"
 
 /* Used to prevent self-occlusion */
 #define SHADOW_RAY_DEPTH_OFFSET 0.001f
@@ -50,9 +51,8 @@ void swap_render_buffers( void )
 	render_output_write = p;
 }
 
-static float calc_raydir_z( void )
-{
-	return fabsf( screen_uv_min[0] ) / tanf( camera.fovx * 0.5f );
+static float calc_raydir_z( void ) {
+	return fabs( screen_uv_min[0] ) / tanf( camera.fovx * 0.5f );
 }
 
 void resize_render_output( int w, int h )
@@ -115,52 +115,6 @@ void get_primary_ray( Ray *ray, const Camera *c, int x, int y )
 	multiply_vec_mat3f( ray->d, c->eye_to_world, ray->d );
 }
 
-#define restrict __restrict
-static void translate_vector( void* restrict out_x, void* restrict out_y, void* restrict out_z, __m128 const x, __m128 const y, __m128 const z, __m128 const * restrict m )
-{
-	__m128 a, b, c;
-	a = _mm_mul_ps( x, m[0] );
-	a = _mm_add_ps( _mm_mul_ps( y, m[1] ), a );
-	a = _mm_add_ps( _mm_mul_ps( z, m[2] ), a );
-	b = _mm_mul_ps( x, m[3] );
-	b = _mm_add_ps( _mm_mul_ps( y, m[4] ), b );
-	b = _mm_add_ps( _mm_mul_ps( z, m[5] ), b );
-	c = _mm_mul_ps( x, m[6] );
-	c = _mm_add_ps( _mm_mul_ps( y, m[7] ), c );
-	c = _mm_add_ps( _mm_mul_ps( z, m[8] ), c );
-	_mm_store_ps( out_x, a );
-	_mm_store_ps( out_y, b );
-	_mm_store_ps( out_z, c );
-}
-
-static __m128 dot_prod( __m128 ax, __m128 ay, __m128 az, __m128 bx, __m128 by, __m128 bz )
-{
-	ax = _mm_mul_ps( ax, bx );
-	ay = _mm_mul_ps( ay, by );
-	az = _mm_mul_ps( az, bz );
-	return _mm_add_ps( _mm_add_ps( ax, ay ), az );
-}
-
-static void normalize_vec( __m128 *px, __m128 *py, __m128 *pz )
-{
-	__m128 x=*px, y=*py, z=*pz, t;
-	t = dot_prod( x, y, z, x, y, z );
-	t = _mm_rsqrt_ps( t );
-	*px = _mm_mul_ps( x, t );
-	*py = _mm_mul_ps( y, t );
-	*pz = _mm_mul_ps( z, t );
-}
-
-static void reflect( __m128 vx[1], __m128 vy[1], __m128 vz[1], __m128 nx, __m128 ny, __m128 nz )
-{
-	__m128 x=*vx, y=*vy, z=*vz, t, a, b, c;
-	t = dot_prod( x, y, z, nx, ny, nz );
-	t = _mm_add_ps( t, t );
-	*vx = _mm_sub_ps( _mm_mul_ps( nx, t ), x );
-	*vy = _mm_sub_ps( _mm_mul_ps( ny, t ), y );
-	*vz = _mm_sub_ps( _mm_mul_ps( nz, t ), z );
-}
-
 static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_mat_p )
 {
 	static const uint32 stored_shade_bits[] = {0x20202020, 0x20202020, 0x20202020, 0x20202020};
@@ -189,15 +143,22 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 	{
 		if ( show_normals )
 		{
-			for( x=0; x<render_resx; x++,out_p++ ) {
-				int r = ( nx[x] + 1.0f ) * 127.5f;
-				int g = ( ny[x] + 1.0f ) * 127.5f;
-				int b = ( nz[x] + 1.0f ) * 127.5f;
-				*out_p = r | g << 8 | b << 16;
+			__m128 byte_half = _mm_set1_ps( 127.5 );
+			for( x=0; x<render_resx; x+=4 )
+			{
+				__m128i r, g, b, rgb;
+				r = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( nx ), byte_half ), byte_half ) );
+				g = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( ny ), byte_half ), byte_half ) );
+				b = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( _mm_load_ps( nz ), byte_half ), byte_half ) );
+				r = _mm_slli_si128( r, 2 );
+				g = _mm_slli_si128( g, 1 );
+				rgb = _mm_or_si128( g, _mm_or_si128( r, b ) );
+				_mm_store_si128( (void*) out_p, rgb );
+				out_p+=4;
+				nx+=4;
+				ny+=4;
+				nz+=4;
 			}
-			nx += render_resx;
-			ny += render_resx;
-			nz += render_resx;
 		}
 		else
 		{
@@ -244,20 +205,19 @@ static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *w
 					__m128i colors;
 					__m128
 					nor_x, nor_y, nor_z,
-					vx, vy, vz,
 					tlx, tly, tlz,
-					d, s,
+					d,
 					mat_dif[4];
 					
 					#if ENABLE_SPECULAR_TERM
-					__m128 tex, tey, tez, refx, refy, refz;
+					__m128 tex, tey, tez, refx, refy, refz, s;
 					#endif
 					
 					/* Compute vector to light */
 					tlx = _mm_sub_ps( lx, _mm_load_ps( wox ) );
 					tly = _mm_sub_ps( ly, _mm_load_ps( woy ) );
 					tlz = _mm_sub_ps( lz, _mm_load_ps( woz ) );
-					normalize_vec( &tlx, &tly, &tlz );
+					normalize_vec( &tlx, &tly, &tlz, tlx, tly, tlz );
 					
 					/* Get world space normal vector */
 					nor_x = _mm_load_ps( nx );
@@ -431,11 +391,7 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 			ny = _mm_sub_ps( _mm_mul_ps( bz, cx ), _mm_mul_ps( bx, cz ) );
 			nz = _mm_sub_ps( _mm_mul_ps( bx, cy ), _mm_mul_ps( by, cx ) );
 			
-			normalize_vec( &nx, &ny, &nz );
-			
-			_mm_store_ps( out_nx, nx );
-			_mm_store_ps( out_ny, ny );
-			_mm_store_ps( out_nz, nz );
+			normalize_vec( out_nx, out_ny, out_nz, nx, ny, nz );
 			
 			out_nx += 4;
 			out_ny += 4;
@@ -507,7 +463,7 @@ static void generate_primary_rays(
 			dx = u;
 			dy = v;
 			dz = w;
-			normalize_vec( &dx, &dy, &dz );
+			normalize_vec( &dx, &dy, &dz, dx, dy, dz );
 			
 			/* Convert to world space */
 			translate_vector( ray_dx+r, ray_dy+r, ray_dz+r, dx, dy, dz, mvp );
@@ -627,7 +583,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				dx = _mm_sub_ps( lx, ox );
 				dy = _mm_sub_ps( ly, oy );
 				dz = _mm_sub_ps( lz, oz );
-				normalize_vec( &dx, &dy, &dz );
+				normalize_vec( &dx, &dy, &dz, dx, dy, dz );
 				
 				ox = _mm_add_ps( ox, _mm_mul_ps( dx, depth_offset ) );
 				oy = _mm_add_ps( oy, _mm_mul_ps( dy, depth_offset ) );
