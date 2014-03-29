@@ -93,15 +93,19 @@ static int csg_operation( Octree *oc, OctreeNode *node, int level, const vec3i n
 		/* The node is completely inside the CSG object */
 		oc_collapse_node( oc, node );
 		node->mat = mat;
+		/*
 		fill_normals( oc, &node_bounds, csg_obj, mat );
+		*/
 		return mat;
 	}
 	
 	if ( level == 0 )
 	{
+		/*
 		float n[3];
 		get_normal( n, &node_bounds, csg_obj, mat );
 		set_voxel_normal( oc, node_pos[0], node_pos[1], node_pos[2], n[0], n[1], n[2] );
+		*/
 		
 		/* Leaf node and overlaps the CSG object. Mark as solid.
 		And since this is a leaf node it does not need to be collapsed */
