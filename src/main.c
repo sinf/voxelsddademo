@@ -284,7 +284,7 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 
 static void load_materials( SDL_PixelFormat *format )
 {
-	const float gamma = 2.0;
+	const float gamma = ENABLE_GAMMA_CORRECTION ? THE_GAMMA_VALUE : 1;
 	SDL_Surface *s;
 	int m;
 	
@@ -306,9 +306,14 @@ static void load_materials( SDL_PixelFormat *format )
 		const unsigned g = pixel >> 8 & 0xFF;
 		const unsigned r = pixel >> 16 & 0xFF;
 		
-		materials_rgb[m][0] = pow( r / 255.0f, gamma );
-		materials_rgb[m][1] = pow( g / 255.0f, gamma );
-		materials_rgb[m][2] = pow( b / 255.0f, gamma );
+		materials_diff[m][0] = pow( r / 255.0f, gamma );
+		materials_diff[m][1] = pow( g / 255.0f, gamma );
+		materials_diff[m][2] = pow( b / 255.0f, gamma );
+		
+		materials_spec[m][0] = 1;
+		materials_spec[m][1] = 1;
+		materials_spec[m][2] = 1;
+		materials_spec[m][3] = 1;
 		
 		materials[m].color = SDL_MapRGB( format, r, g, b );
 	}
