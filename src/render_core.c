@@ -1,5 +1,6 @@
 #include <xmmintrin.h>
 #include <emmintrin.h>
+#include <pmmintrin.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,6 +9,8 @@
 #include "render_core.h"
 #include "render_threads.h"
 #include "mm_math.c"
+
+#define ENABLE_RAYCAST 0
 
 Octree *the_volume = NULL;
 Camera camera;
@@ -126,6 +129,7 @@ static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_m
 	_mm_store_si128( mat_p, mat );
 }
 
+/* 1 thread, 2000x1000, takes about 20 ms per frame */
 static void shade_pixels( size_t start_row, size_t end_row, float *wox, float *woy, float *woz )
 {
 	size_t seek = start_row * render_resx;
@@ -318,6 +322,8 @@ Inputs:
 Outputs:
 	render_output_n[0..2]  World space surface normals
 	wox_p, woy_p, woz_p    World space coordinates of ray intersections (=ray origin + ray direction * depth * depth_offset)
+Note:
+	This function alone takes about 16 ms per frame with 1 thread at 2000x1000 resolution 
 */
 static void reconstruct_normals( size_t first_row, size_t end_row,
 	float const *ray_dx, float const *ray_dy, float const *ray_dz,
@@ -327,7 +333,7 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 	int need_normals = enable_phong;
 	
 	/* prevents self-occlusion for shadow rays */
-	__m128 depth_offset = _mm_set1_ps( 0.9999f );
+	__m128 depth_offset = _mm_set1_ps( 0.001f );
 	
 	size_t second_last_row = end_row - 1;
 	size_t y, x, seek;
@@ -340,95 +346,119 @@ static void reconstruct_normals( size_t first_row, size_t end_row,
 	
 	for( y=first_row; y<second_last_row; y++ )
 	{
-		__m128 lax, lay, laz, lz;
-		lax = lay = laz = lz = _mm_setzero_ps();
+		__m128
+		ldx_suf, ldy_suf, ldz_suf, /* previous ray direction on the left with the highest slot shuffled into the lowest slot */
+		lz_suf; /* previous depth on the left with the highest slow shuffled into the lowest slot */
+		
+		#if 0
+		/* Leaving these uninitialized works just fine.
+		The leftmost pixel column won't have proper normals either way */
+		ldx_suf = ldy_suf = ldz_suf = lz_suf = _mm_setzero_ps();
+		#endif
 		
 		CALC_ROW_NORMALS:
 		for( x=0; x<render_resx; x+=4 )
 		{
 			__m128
-			z0, z1, z2,
-			ax, ay, az,
-			ax0, ay0, az0,
-			bx, by, bz,
-			cx, cy, cz,
-			nx, ny, nz;
+			dx, dy, dz, /* ray direction */
+			ldx, ldy, ldz, /* ray direction on the left */
+			bdx, bdy, bdz, /* ray direction below */
+			z, /* depth */
+			lz, /* depth on the left */
+			bz, /* depth below */
+			wx, wy, wz, /* world position */
+			lwx, lwy, lwz, /* world position on the left */
+			bwx, bwy, bwz, /* world position below */
+			ux, uy, uz, /* vector u */
+			vx, vy, vz, /* vector v */
+			nx, ny, nz; /* normal vector */
 			
-			z0 = _mm_load_ps( depth_p );
+			z = _mm_load_ps( depth_p );
+			z = _mm_sub_ps( z, depth_offset );
 			
-			ax0 = _mm_load_ps( ray_dx );
-			ay0 = _mm_load_ps( ray_dy );
-			az0 = _mm_load_ps( ray_dz );
+			dx = _mm_load_ps( ray_dx );
+			dy = _mm_load_ps( ray_dy );
+			dz = _mm_load_ps( ray_dz );
 			
-			/* compute world space coordinates from ray direction and depth */
-			ax = _mm_mul_ps( ax0, z0 );
-			ay = _mm_mul_ps( ay0, z0 );
-			az = _mm_mul_ps( az0, z0 );
+			/* compute world space coordinates from ray direction and depth
+			(these coordinates are incorrect because ray origin isn't added, but they work anyway because all primary rays share the same origin */
+			wx = _mm_mul_ps( dx, z );
+			wy = _mm_mul_ps( dy, z );
+			wz = _mm_mul_ps( dz, z );
 			
-			/* save world space position of the pixel for later use */
-			_mm_store_ps( wox_p, _mm_add_ps( _mm_load_ps( wox_p ), _mm_mul_ps( ax, depth_offset ) ) );
-			_mm_store_ps( woy_p, _mm_add_ps( _mm_load_ps( woy_p ), _mm_mul_ps( ay, depth_offset ) ) );
-			_mm_store_ps( woz_p, _mm_add_ps( _mm_load_ps( woz_p ), _mm_mul_ps( az, depth_offset ) ) );
+			/* compute the correct world space position of the pixel for later use */
+			_mm_store_ps( wox_p, _mm_add_ps( _mm_load_ps( wox_p ), wx ) );
+			_mm_store_ps( woy_p, _mm_add_ps( _mm_load_ps( woy_p ), wy ) );
+			_mm_store_ps( woz_p, _mm_add_ps( _mm_load_ps( woz_p ), wz ) );
 			wox_p += 4;
 			woy_p += 4;
 			woz_p += 4;
 			
 			if ( need_normals ) {
-				z1 = _mm_move_ss( _mm_shuffle_ps( z0, z0, 0x93 ), lz );
-				z2 = _mm_load_ps( depth_p + render_resx );
 				
-				/* Left shift ax0,ay0,az0 by 32 bits and put lax,lay,laz into the low 32 bits */
-				bx = _mm_move_ss( _mm_shuffle_ps( ax0, ax0, 0x93 ), lax );
-				by = _mm_move_ss( _mm_shuffle_ps( ay0, ay0, 0x93 ), lay );
-				bz = _mm_move_ss( _mm_shuffle_ps( az0, az0, 0x93 ), laz );
+				lz = lz_suf;
+				lz = _mm_move_ss( lz_suf = _mm_shuffle_ps( z, z, 0x93 ), lz );
 				
-				cx = _mm_load_ps( ray_dx + render_resx );
-				cy = _mm_load_ps( ray_dy + render_resx );
-				cz = _mm_load_ps( ray_dz + render_resx );
-			
+				bz = _mm_load_ps( depth_p + render_resx );
+				bz = _mm_sub_ps( bz, depth_offset );
+				
+				/* Ray directions on the left.
+				Left shift ax0,ay0,az0 by 32 bits and put lax,lay,laz into the low 32 bits */
+				
+				ldx = ldx_suf;
+				ldy = ldy_suf;
+				ldz = ldz_suf;
+				ldx = _mm_move_ss( ldx_suf = _mm_shuffle_ps( dx, dx, 0x93 ), ldx );
+				ldy = _mm_move_ss( ldy_suf = _mm_shuffle_ps( dy, dy, 0x93 ), ldy );
+				ldz = _mm_move_ss( ldz_suf = _mm_shuffle_ps( dz, dz, 0x93 ), ldz );
+				
+				/* Ray directions below */
+				bdx = _mm_load_ps( ray_dx + render_resx );
+				bdy = _mm_load_ps( ray_dy + render_resx );
+				bdz = _mm_load_ps( ray_dz + render_resx );
+				
 				/* compute world space position of the pixels on the left */
-				bx = _mm_mul_ps( bx, z1 );
-				by = _mm_mul_ps( by, z1 );
-				bz = _mm_mul_ps( bz, z1 );
+				lwx = _mm_mul_ps( ldx, lz );
+				lwy = _mm_mul_ps( ldy, lz );
+				lwz = _mm_mul_ps( ldz, lz );
 				
 				/* compute world space position of the pixels below */
-				cx = _mm_mul_ps( cx, z2 );
-				cy = _mm_mul_ps( cy, z2 );
-				cz = _mm_mul_ps( cz, z2 );
+				bwx = _mm_mul_ps( bdx, bz );
+				bwy = _mm_mul_ps( bdy, bz );
+				bwz = _mm_mul_ps( bdz, bz );
 				
-				/* compute vector BA */
-				bx = _mm_sub_ps( ax, bx );
-				by = _mm_sub_ps( ay, by );
-				bz = _mm_sub_ps( az, bz );
+				/* u = world pos - world pos on the left */
+				ux = _mm_sub_ps( wx, lwx );
+				uy = _mm_sub_ps( wy, lwy );
+				uz = _mm_sub_ps( wz, lwz );
 				
-				/* compute vector AC */
-				cx = _mm_sub_ps( cx, ax );
-				cy = _mm_sub_ps( cy, ay );
-				cz = _mm_sub_ps( cz, az );
+				/* v = world pos below - world pos */
+				vx = _mm_sub_ps( bwx, wx );
+				vy = _mm_sub_ps( bwy, wy );
+				vz = _mm_sub_ps( bwz, wz );
 				
-				/* cross product: BA x AC */
-				nx = _mm_sub_ps( _mm_mul_ps( by, cz ), _mm_mul_ps( bz, cy ) );
-				ny = _mm_sub_ps( _mm_mul_ps( bz, cx ), _mm_mul_ps( bx, cz ) );
-				nz = _mm_sub_ps( _mm_mul_ps( bx, cy ), _mm_mul_ps( by, cx ) );
+				/* cross product: u x v */
+				nx = _mm_sub_ps( _mm_mul_ps( uy, vz ), _mm_mul_ps( uz, vy ) );
+				ny = _mm_sub_ps( _mm_mul_ps( uz, vx ), _mm_mul_ps( ux, vz ) );
+				nz = _mm_sub_ps( _mm_mul_ps( ux, vy ), _mm_mul_ps( uy, vx ) );
 				
+				#if 1
 				normalize_vec( out_nx, out_ny, out_nz, nx, ny, nz );
-				
-				/* load_ss doesn't care about alignment. yay!! */
-				lax = _mm_load_ss( ray_dx + 3 );
-				lay = _mm_load_ss( ray_dy + 3 );
-				laz = _mm_load_ss( ray_dz + 3 );
-				lz = _mm_load_ss( depth_p + 3 );
+				#else
+				_mm_store_ps( out_nx, nx );
+				_mm_store_ps( out_ny, ny );
+				_mm_store_ps( out_nz, nz );
+				#endif
 				
 				out_nx += 4;
 				out_ny += 4;
 				out_nz += 4;
 			}
 			
+			depth_p += 4;
 			ray_dx += 4;
 			ray_dy += 4;
 			ray_dz += 4;
-			
-			depth_p += 4;
 		}
 	}
 	
@@ -481,7 +511,7 @@ static void generate_primary_rays(
 		{
 			__m128 dx, dy, dz;
 			
-			/* The average (unnormalized) ray length is 0.143738
+			/* For a horizontal field of view of 65 degrees the average unnormalized ray length is 0.143738
 			This information could be used to make vector normalization faster */
 			
 			/* Eye space direction */
@@ -506,7 +536,7 @@ static void generate_primary_rays(
 
 void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
-	const int enable_raycast = 0;
+	const int enable_raycast = ENABLE_RAYCAST;
 	const int use_dac_method = 0;
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
 	

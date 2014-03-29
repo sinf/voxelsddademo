@@ -247,8 +247,9 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 		"Depth: %d/%d\n"
 		"Nodes: %u\n"
 		"Mat=%d\n",
-		the_volume->size,
-		the_volume->root_level - oc_detail_level, the_volume->root_level,
+		(int) the_volume->size,
+		(int) the_volume->root_level - oc_detail_level,
+		(int) the_volume->root_level,
 		the_volume->num_nodes,
 		brush_mat );
 	
