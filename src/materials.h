@@ -3,14 +3,7 @@
 #define _MATERIALS_H
 #include "types.h"
 
-/* Material number 0 is treated as air (transparent).
-The color is used as background color */
-
-typedef struct Material {
-	uint32 color;
-} Material;
-
-typedef unsigned Material_ID;
+/* Material number 0 is treated as air (transparent). */
 
 #define MATERIAL_BITS 6
 #define NUM_MATERIALS (1<<MATERIAL_BITS)

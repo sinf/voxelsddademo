@@ -19,9 +19,10 @@ extern Camera camera;
 extern int enable_shadows;
 extern int show_normals;
 extern int enable_phong;
-extern Material materials[NUM_MATERIALS];
-extern float materials_diff[NUM_MATERIALS][4]; /* diffuse reflection constants. last component is padding */
-extern float materials_spec[NUM_MATERIALS][4]; /* specular rgb color & exponent */ 
+
+extern uint32 materials_rgb[NUM_MATERIALS]; /* rgb colors (any pixel format is ok) */
+extern float materials_diff[NUM_MATERIALS][4]; /* rgb diffuse reflection constants. last component is padding */
+extern float materials_spec[NUM_MATERIALS][4]; /* rgb specular color & exponent */ 
 
 extern size_t render_resx, render_resy;
 extern uint32 *render_output_rgba;

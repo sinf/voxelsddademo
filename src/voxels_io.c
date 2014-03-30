@@ -70,7 +70,7 @@ Octree *oc_read( FILE *file )
 		return NULL;
 	}
 	
-	if ( header.mat_size > sizeof(Material_ID) )
+	if ( header.mat_size > 1 )
 	{
 		printf( "Error: too large material indexes (%d)\n", header.mat_size );
 		return NULL;
@@ -86,7 +86,7 @@ void oc_write( FILE *file, Octree *oc )
 {
 	FileHeader header;
 	header.version = CURRENT_FILE_VERSION;
-	header.mat_size = sizeof( Material_ID );
+	header.mat_size = 1;
 	header.root_level = oc->root_level;
 	
 	printf( "Writing octree...\n" );

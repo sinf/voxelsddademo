@@ -19,7 +19,7 @@ static float *render_output_z = NULL; /* ray depth (distance to first intersecti
 static uint32 *render_output_write = NULL;
 uint32 *render_output_rgba = NULL;
 
-Material materials[NUM_MATERIALS];
+uint32 materials_rgb[NUM_MATERIALS];
 float materials_diff[NUM_MATERIALS][4];
 float materials_spec[NUM_MATERIALS][4];
 
@@ -452,7 +452,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		/* Just put the material color to screen */
 		uint32 *out_p = render_output_write + pixel_seek;
 		for( r=0; r<num_rays; r++ )
-			out_p[r] = materials[mat_p0[r]].color;
+			out_p[r] = materials_rgb[mat_p0[r]];
 	}
 	else
 	{

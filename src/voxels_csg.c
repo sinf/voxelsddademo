@@ -16,60 +16,6 @@ typedef struct CSG_Object
 	int material;
 } CSG_Object;
 
-static void get_normal( float nor[3], aabb3f box[1], const CSG_Object csg_obj[1], int mat )
-{
-	csg_obj->calc_normal( nor, csg_obj->data,
-	( box->min[0] + box->max[0] ) * 0.5f,
-	( box->min[1] + box->max[1] ) * 0.5f,
-	( box->min[2] + box->max[2] ) * 0.5f );
-	if ( !mat ) {
-		nor[0] = -nor[0];
-		nor[1] = -nor[1];
-		nor[2] = -nor[2];
-	}
-}
-
-static void fill_normals( Octree *oc, aabb3f box[1], const CSG_Object *csg_obj, int mat )
-{
-	int x0, y0, z0, x1, y1, z1;
-	int x, y, z;
-	int max;
-	
-	#define MIN(x,y) ((x)<(y)?(x):(y))
-	#define MAX(x,y) ((x)>(y)?(x):(y))
-	
-	x0 = box->min[0];
-	y0 = box->min[1];
-	z0 = box->min[2];
-	x1 = box->max[0];
-	y1 = box->max[1];
-	z1 = box->max[2];
-	
-	x0 = MAX( 0, x0 );
-	y0 = MAX( 0, y0 );
-	z0 = MAX( 0, z0 );
-	
-	max = oc->size - 1;
-	x1 = MIN( max, x1 );
-	y1 = MIN( max, y1 );
-	z1 = MIN( max, z1 );
-	
-	for( x=x0; x<x1; x++ ) {
-		for( y=y0; y<y1; y++ ) {
-			for( z=z0; z<z1; z++ ) {
-				float n[3];
-				csg_obj->calc_normal( n, csg_obj->data, x+.5f, y+.5f, z+.5f );
-				if ( !mat ) {
-					n[0] = -n[0];
-					n[1] = -n[1];
-					n[2] = -n[2];
-				}
-				set_voxel_normal( oc, x, y, z, n[0], n[1], n[2] );
-			}
-		}
-	}
-}
-
 static int csg_operation( Octree *oc, OctreeNode *node, int level, const vec3i node_pos, const CSG_Object *csg_obj )
 {
 	aabb3f node_bounds;
@@ -194,7 +140,7 @@ static void calc_box_normal( float nor[3], const aabb3f *box, float x, float y, 
 	}
 }
 
-void csg_sphere( Octree *oc, const Sphere *sph, Material_ID mat )
+void csg_sphere( Octree *oc, const Sphere *sph, int mat )
 {
 	const vec3i root_pos = {0, 0, 0};
 	CSG_Object ob;
@@ -206,7 +152,7 @@ void csg_sphere( Octree *oc, const Sphere *sph, Material_ID mat )
 	csg_operation( oc, &oc->root, oc->root_level, root_pos, &ob );
 }
 
-void csg_box( Octree *oc, const aabb3f *box, Material_ID mat )
+void csg_box( Octree *oc, const aabb3f *box, int mat )
 {
 	const vec3i root_pos = {0, 0, 0};
 	CSG_Object ob;

@@ -107,7 +107,7 @@ static void reset_camera( void )
 	update_camera_matrix( &camera );
 }
 
-static void shoot( int win_x, int win_y, Material_ID m )
+static void shoot( int win_x, int win_y, int m )
 {
 	uint8 mat = 0;
 	int x, y;
@@ -315,7 +315,7 @@ static void load_materials( SDL_PixelFormat *format )
 		materials_spec[m][2] = 1;
 		materials_spec[m][3] = 1;
 		
-		materials[m].color = SDL_MapRGB( format, r, g, b );
+		materials_rgb[m] = SDL_MapRGB( format, r, g, b );
 	}
 	
 	memset( materials_diff[0], 0, sizeof(float)*4 );

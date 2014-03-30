@@ -77,7 +77,7 @@ static void process_leaf( const OctreeNode *node,
 	uint8 out_mat[],
 	float out_depth[] )
 {
-	Material_ID mat = node->mat;
+	uint8 mat = node->mat;
 	size_t r;
 	
 	if ( !mat )
