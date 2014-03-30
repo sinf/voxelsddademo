@@ -45,7 +45,7 @@ static void *render_thread_func( void *p )
 	
 	start_row = self->id * render_resy / num_render_threads;
 	end_row = ( self->id + 1 ) * render_resy / num_render_threads;
-	ray_buffer_size = 6 * sizeof( float ) * ( end_row - start_row ) * render_resx;
+	ray_buffer_size = RENDER_THREAD_MEM_PER_PIXEL * ( end_row - start_row ) * render_resx;
 	ray_buffer = aligned_alloc( 16, ray_buffer_size );
 	if ( !ray_buffer ) {
 		printf( "Error: Failed to allocate ray buffer (%u KiB)\n", (unsigned)(ray_buffer_size>>10) );
