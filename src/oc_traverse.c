@@ -131,7 +131,7 @@ void oc_traverse( const Octree *oc, const Ray *ray, uint8 *out_m, float *out_z )
 			{
 				#if ALLOW_DEBUG_VISUALS
 					int level = s;
-					*out_m = ( oc_show_travel_depth ) ? ( (Material_ID) (level + 2) ) : parent->mat;
+					*out_m = ( oc_show_travel_depth ) ? ( level + 2 ) : parent->mat;
 				#else
 					*out_m = parent->mat;
 				#endif

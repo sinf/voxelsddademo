@@ -10,7 +10,6 @@
 Octree *oc_init( int toplevel )
 {
 	Octree *oc;
-	size_t bricks;
 	
 	oc = calloc( 1, sizeof(Octree) );
 	
@@ -23,27 +22,7 @@ Octree *oc_init( int toplevel )
 	oc->root.mat = 0;
 	oc->root.children = NULL;
 	
-	bricks = oc->nor_bricks_x = ( oc->size + NOR_BRICK_S - 1 ) / NOR_BRICK_S;
-	bricks = bricks * bricks * bricks;
-	oc->nor_bricks = calloc( bricks, sizeof oc->nor_bricks[0] );
-	oc->nor_density = calloc( bricks, sizeof oc->nor_density[0] );
-	
 	return oc;
-}
-
-static void clear_normals( Octree *oc )
-{
-	size_t b, n;
-	
-	b = oc->nor_bricks_x;
-	b = b*b*b;
-	
-	for( n=0; n<b; n++ ) {
-		if ( oc->nor_bricks[n] )
-			free( oc->nor_bricks[n] );
-	}
-	
-	memset( oc->nor_density, 0, b * sizeof oc->nor_density[0] );
 }
 
 static uint64 get_morton_code( uint64 x, uint64 y, uint64 z )
@@ -58,83 +37,21 @@ static uint64 get_morton_code( uint64 x, uint64 y, uint64 z )
 		y >>= 1;
 		z >>= 1;
 	}
+	#if 0
 	a |= ( z & 1 ) << 21; /* the last available bit */
+	#endif
 	return a;
-}
-
-void set_voxel_normal( Octree *oc, unsigned x, unsigned y, unsigned z, float nx, float ny, float nz )
-{
-	unsigned bx, by, bz;
-	uint64 b;
-	/* uint64 nbx; */
-	float *nors;
-	float *p;
-	
-	bx = x / NOR_BRICK_S;
-	by = y / NOR_BRICK_S;
-	bz = z / NOR_BRICK_S;
-	x %= NOR_BRICK_S;
-	y %= NOR_BRICK_S;
-	z %= NOR_BRICK_S;
-	
-	/* nbx = oc->nor_bricks_x; */
-	b = get_morton_code( bx, by, bz );
-	nors = oc->nor_bricks[b];
-	
-	if ( nx == ny && ny == nz && nz == 0.0f && oc->nor_density[b] ) {
-		oc->nor_density[b] -= 1;
-		if ( !oc->nor_density[b] ) {
-			free( nors );
-			oc->nor_bricks[b] = NULL;
-			return;
-		}
-	}
-	
-	if ( !nors )
-		oc->nor_bricks[b] = nors = aligned_alloc( 16, NOR_BRICK_S3 * sizeof( float ) * 3 );
-	
-	oc->nor_density[b] += 1;
-	
-	p = nors + x*NOR_BRICK_S2*3 + y*NOR_BRICK_S*3 + z*3;
-	p[0] = nx;
-	p[1] = ny;
-	p[2] = nz;
-}
-
-void get_voxel_normal( Octree const *oc, uint64 voxel_index, float *nx, float *ny, float *nz )
-{
-	uint64 b, c;
-	float *n;
-	
-	b = voxel_index / NOR_BRICK_S3;
-	c = voxel_index % NOR_BRICK_S3;
-	n = oc->nor_bricks[b];
-	
-	if ( !n ) {
-		*nx = *ny = *nz = 0;
-		return;
-	}
-	
-	n += 3*c;
-	*nx = n[0];
-	*ny = n[1];
-	*nz = n[2];
 }
 
 void oc_free( Octree *oc )
 {
-	clear_normals( oc );
-	free( oc->nor_bricks );
-	free( oc->nor_density );
-	
 	oc_collapse_node( oc, &oc->root );
 	assert( oc->num_nodes == 1 );
 	free( oc );
 }
 
-void oc_clear( Octree *oc, Material_ID m )
+void oc_clear( Octree *oc, int m )
 {
-	clear_normals( oc );
 	oc_collapse_node( oc, &oc->root );
 	assert( oc->num_nodes == 1 );
 	oc->root.mat = m;
@@ -158,7 +75,7 @@ const int OC_RECURSION_MASK[8][3] = {
 void oc_expand_node( Octree *oc, OctreeNode *node )
 {
 	int n;
-	Material_ID m;
+	uint8 m;
 	
 	if ( node->children )
 		return;
@@ -197,7 +114,7 @@ void get_node_bounds( aabb3f *bounds, const vec3i pos, int size )
 
 /* Chooses the most frequent (mode) material in children
 Material zero is treated as a second class citizen */
-Material_ID get_mode_material( OctreeNode *node )
+int get_mode_material( OctreeNode *node )
 {
 	int count[NUM_MATERIALS] = {0};
 	int freq, index;
