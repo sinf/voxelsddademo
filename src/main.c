@@ -125,7 +125,7 @@ static void shoot( int win_x, int win_y, int m )
 		Sphere sph;
 		int n;
 		
-		sph.r = brush_radius;
+		sph.r = brush_radius * ( 1 << the_volume->root_level ) / 512.0;
 		for( n=0; n<3; n++ )
 		{
 			sph.o[n] = ray.o[n] + ray.d[n] * depth;
