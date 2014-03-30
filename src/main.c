@@ -109,7 +109,7 @@ static void reset_camera( void )
 
 static void shoot( int win_x, int win_y, Material_ID m )
 {
-	Material_ID mat = 0;
+	uint8 mat = 0;
 	int x, y;
 	float depth;
 	Ray ray;
@@ -317,6 +317,9 @@ static void load_materials( SDL_PixelFormat *format )
 		
 		materials[m].color = SDL_MapRGB( format, r, g, b );
 	}
+	
+	memset( materials_diff[0], 0, sizeof(float)*4 );
+	memset( materials_spec[0], 0, sizeof(float)*4 );
 	
 	SDL_UnlockSurface( s );
 	SDL_FreeSurface( s );

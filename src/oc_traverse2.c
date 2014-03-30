@@ -1,8 +1,8 @@
 #include <stdlib.h>
-#include <float.h>
 #include <xmmintrin.h>
 #include "voxels.h"
 #include "oc_traverse2.h"
+#include "render_core.h"
 
 #define OCTREE_DEPTH_HARDLIMIT 30
 #define ALLOW_DEBUG_VISUALS 1
@@ -182,7 +182,7 @@ void oc_traverse_dac( const Octree oc[1],
 		
 		ray_bits[r] = iter;
 		out_mat[r] = 0;
-		out_depth[r] = FLT_MAX;
+		out_depth[r] = MAX_DEPTH_VALUE;
 	}
 	
 	traverse_branch( &oc->root, oc->root_level - oc_detail_level, ray_count, params, ray_bits, out_mat, out_depth );

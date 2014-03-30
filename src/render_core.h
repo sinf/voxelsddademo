@@ -6,9 +6,11 @@
 #include "voxels.h"
 #include "materials.h"
 
-#define ENABLE_RAYCAST 1
+#define MAX_DEPTH_VALUE 100000
+
+#define ENABLE_RAYCAST 0
 #define ENABLE_GAMMA_CORRECTION 0 /* enables/disables 3 sqrts per pixel */
-#define ENABLE_SPECULAR_TERM 0
+/* #define ENABLE_SPECULAR_TERM 0 */
 #define THE_GAMMA_VALUE 2.0f
 
 /* todo: try to get rid of these globals */
@@ -33,6 +35,7 @@ void resize_render_output( int w, int h );
 void get_primary_ray( Ray *ray, const Camera *c, int x, int y );
 
 /* Used by render_threads.c */
+#define RENDER_THREAD_MEM_PER_PIXEL (6*sizeof(float)) /* <- ray_buffer gets allocated based on this value */
 void render_part( size_t start_row, size_t end_row, float *ray_buffer );
 
 /* Makes render_output_rgba point to the last frame. The next frame will be rendered into another buffer */

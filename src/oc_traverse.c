@@ -1,7 +1,8 @@
 #include <stdlib.h>
-#include <float.h>
 #include <xmmintrin.h>
 #include "voxels.h"
+#include "types.h"
+#include "render_core.h"
 
 #define ALLOW_DEBUG_VISUALS 1
 #define OCTREE_DEPTH_HARDLIMIT 30
@@ -14,7 +15,7 @@ int oc_detail_level = 0;
 
 typedef unsigned uint;
 
-void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *out_z )
+void oc_traverse( const Octree *oc, const Ray *ray, uint8 *out_m, float *out_z )
 {
 	struct {
 		const OctreeNode *node;
@@ -144,7 +145,7 @@ void oc_traverse( const Octree *oc, const Ray *ray, Material_ID *out_m, float *o
 	}
 	
 	*out_m = 0;
-	*out_z = FLT_MAX;
+	*out_z = MAX_DEPTH_VALUE;
 }
 
 #endif
