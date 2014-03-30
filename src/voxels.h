@@ -21,7 +21,7 @@ typedef struct OctreeNode
 			The material index.
 		For non-leaf nodes:
 			The most common (=mode) material in child nodes */
-	uint8 mat;
+	int mat;
 } OctreeNode;
 
 typedef struct Octree
