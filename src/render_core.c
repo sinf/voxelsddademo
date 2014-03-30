@@ -26,6 +26,7 @@ float materials_spec[NUM_MATERIALS][4];
 int enable_shadows = 0;
 int enable_phong = 1;
 int show_normals = 0;
+static const int enable_aoccl = 0; /* ambient occlusion */
 
 static float screen_uv_scale[2];
 static float screen_uv_min[2];
@@ -190,6 +191,57 @@ __m128 tlx, __m128 tly, __m128 tlz /* vector to light */
 	return colors;
 }
 
+static uint64 fnv1a_hash( uint64 x )
+{
+	uint64 h = 2166136261;
+	int t;
+	for( t=0; t<8; t++ ) {
+		x >>= 4;
+		h = h ^ ( x & 0xF );
+		h *= 16777619;
+		h &= 0xFFFFFFFF;
+	}
+	return h;
+}
+
+static void calc_ao_rays( void *xp, void *yp, void *zp, __m128 nx, __m128 ny, __m128 nz, int k )
+{
+	static const float
+	lut_x[] = {
+0.17608480733726006, -0.22311073318820154, 0.03387636667527373, 0.27668057899237797, -0.5035291840643238, 0.4729615227533923, -0.1568384393943196, -0.296495567066451, 0.6375586537073917, -0.657270942922291, 0.3139277056945738, 0.22980628205915257, -0.6860105272412337, 0.7969168510214679, -0.48150656533876957, -0.11010980532366277, 0.6689611871564978, -0.8906857415156827, 0.6426630271806866, -0.042521530715078804, -0.5979054381466168, 0.9361981733488518, -0.7838510465201524, 0.21159681451541415, 0.4833325303255987, -0.9328318142586943, 0.8942820818781708, -0.38222476698907004, -0.3364217546663529, 0.8824839190100603, -0.9659070760328131, 0.5407717140962143, 0.16935549543945927, -0.7897540927167819, 0.9935396814284652, -0.6750052493244947, 0.004829801391683504, 0.6618866869707114, -0.9749744764429643, 0.7743722856595951, -0.17255385351723249, -0.5085937894852695, 0.9110404352134207, -0.8302492360063659, 0.3199986260206788, 0.34184723273622036, -0.8055612930008001, 0.8360278347780077, -0.4332244981219977, -0.1757751277808731, 0.6651993770836362, -0.7867953829706278, 0.497699465479315, 0.02699220371529747, -0.49910714050739646, 0.6778584573739476, -0.4959101352871499, 0.08348071572637865, 0.3178957953001336, -0.49832414649111745, 0.3956506863211547, -0.11957042111618797, -0.12556607825354404, 0.16209996356578596
+	}, lut_y[] = {
+0.0, 0.20438770782809604, -0.38600372557254214, 0.360880820470474, -0.08906722276189095, -0.30085940631762265, 0.5834311770066409, -0.57088417221442, 0.2328353977766658, 0.27131189057069055, -0.6708452727509833, 0.7326586395458319, -0.3975571228002394, -0.1751999341695868, 0.6848935405671901, -0.8497097681835751, 0.5638011967468403, 0.03683265175979679, -0.6395355485584487, 0.9195673052042719, -0.7164905417447618, 0.12596414010849727, 0.545383141694224, -0.940569055126698, 0.8434797119694427, -0.2975987914656791, -0.41318100441167965, 0.9133065404754042, -0.9353381807465213, 0.4638088152069185, 0.25461000539008943, -0.8410242639831756, 0.9854311622530797, -0.6116299595442433, -0.0823127317128023, 0.729660895731282, -0.9900511514025508, 0.7296334682468557, -0.09036041533640489, -0.5877209563877525, 0.9485085803572646, -0.8082064041270729, 0.24967841272553218, 0.42607020018518765, -0.8631413492122121, 0.8397392177608405, -0.3817705300227861, -0.25775631680212285, 0.7392208016566791, -0.818554114783267, 0.4725264787316605, 0.09805679329400425, -0.5847177536526527, 0.7401725510403583, -0.5064654940561399, 0.03465935864398168, 0.40974564926851953, -0.5983487314909354, 0.4616830597991392, -0.11466322164887624, -0.2241598621265619, 0.36857753427073864, -0.27529237978379434, 0.06877107812860624
+	}, lut_z[] = {
+-0.984375, -0.953125, -0.921875, -0.890625, -0.859375, -0.828125, -0.796875, -0.765625, -0.734375, -0.703125, -0.671875, -0.640625, -0.609375, -0.578125, -0.546875, -0.515625, -0.484375, -0.453125, -0.421875, -0.390625, -0.359375, -0.328125, -0.296875, -0.265625, -0.234375, -0.203125, -0.171875, -0.140625, -0.109375, -0.078125, -0.046875, -0.015625, 0.015625, 0.046875, 0.078125, 0.109375, 0.140625, 0.171875, 0.203125, 0.234375, 0.265625, 0.296875, 0.328125, 0.359375, 0.390625, 0.421875, 0.453125, 0.484375, 0.515625, 0.546875, 0.578125, 0.609375, 0.640625, 0.671875, 0.703125, 0.734375, 0.765625, 0.796875, 0.828125, 0.859375, 0.890625, 0.921875, 0.953125, 0.984375
+	};
+	__m128 x, y, z, d;
+	__m128i di;
+	
+	k &= 0xF;
+	k <<= 2;
+	
+	/* Get a unit length vector */
+	x = _mm_load_ps( lut_x + k );
+	y = _mm_load_ps( lut_y + k );
+	z = _mm_load_ps( lut_z + k );
+	
+	/* Compare against the normal */
+	d = dot_prod( x, y, z, nx, ny, nz );
+	
+	/* Negate the vector if the dot product is negative */
+	di = _mm_castps_si128( d );
+	di = _mm_srli_epi32( di, 31 ); /* clear all but the sign bit */
+	di = _mm_slli_epi32( di, 31 );
+	d = _mm_castsi128_ps( di );
+	x = _mm_xor_ps( x, d );
+	y = _mm_xor_ps( y, d );
+	z = _mm_xor_ps( z, d );
+	
+	_mm_store_ps( xp, x );
+	_mm_store_ps( yp, y );
+	_mm_store_ps( zp, z );
+}
+
 /*
 Inputs:
 	wox_p, woy_p, woz_p    Ray origin
@@ -292,6 +344,13 @@ static void shade_pixels( size_t first_row, size_t end_row,
 					/* Global ambient light = 0.25 */
 					lamb = _mm_add_ps( _mm_add_ps( tlx, tlx ), _mm_add_ps( tlx, tlx ) );
 					lamb = _mm_mul_ps( tlx, _mm_rcp_ps(lamb) );
+					
+					if ( enable_aoccl ) {
+						/* Save normal vector for later use */
+						_mm_store_ps( tlx_p, nx );
+						_mm_store_ps( tly_p, ny );
+						_mm_store_ps( tlz_p, nz );
+					}
 					
 					rgb = calculate_phong( ldif, lamb,
 					mat_p[0], mat_p[1], mat_p[2], mat_p[3],
@@ -400,7 +459,8 @@ static void generate_primary_rays(
 void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
 	const int enable_raycast = ENABLE_RAYCAST;
-	const int use_dac_method = 0;
+	const int use_dac_method = ENABLE_DAC;
+	
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
 	
 	size_t r;
@@ -410,7 +470,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	size_t pixel_seek;
 	
 	float *depth_p0;
-	uint8 *mat_p, *mat_p0;
+	uint8 *mat_p0;
 	
 	num_rays = resx * resy;
 	ray_ox = ray_buffer;
@@ -424,7 +484,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	pixel_seek = start_row * render_resx;
 	mat_p0 = render_output_m + pixel_seek;
 	depth_p0 = render_output_z + pixel_seek;
-	mat_p = mat_p0;
 	
 	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz );
 	
@@ -464,7 +523,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		lz = _mm_load_ps( light_z );
 		
 		/* Prevents self-occlusion problem with shadows */
-		depth_offset = _mm_set1_ps( 0.001f );
+		depth_offset = _mm_set1_ps( 0.001f / 512.0 * ( 1 << the_volume->root_level ) );
 		
 		/* Generate shadow rays */
 		for( r=0; r<num_rays; r+=4 )
@@ -516,18 +575,15 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 					o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
 					d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
 					oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
-					mat_p = mat_p0;
 					
 					for( r=0; r<num_rays; r+=16 )
-						calc_shadow_mat( mat_p+r, shadow_buf+r, shade_bits );
+						calc_shadow_mat( mat_p0+r, shadow_buf+r, shade_bits );
 					
 					free( shadow_buf );
 				}
 				else
 				{
 					/* Trace shadows */
-					mat_p = mat_p0;
-					
 					for( r=0; r<num_rays; r+=16 )
 					{
 						uint8 shadow_m[16] = {0};
@@ -539,7 +595,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 							float z;
 							int k = r + s;
 							
-							if ( mat_p[k] == 0 )
+							if ( mat_p0[k] == 0 )
 								continue; /* the sky doesn't receive shadows */
 							
 							ray.o[0]=ray_ox[k]; ray.o[1]=ray_oy[k]; ray.o[2]=ray_oz[k];
@@ -547,7 +603,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 							oc_traverse( the_volume, &ray, shadow_m+s, &z );
 						}
 						
-						calc_shadow_mat( mat_p+r, shadow_m, shade_bits );
+						calc_shadow_mat( mat_p0+r, shadow_m, shade_bits );
 					}
 				}
 			}
@@ -557,5 +613,69 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		ray_dx, ray_dy, ray_dz, /* vectors to light */
 		ray_ox, ray_oy, ray_oz, /* world space coords */
 		mat_p0, render_output_write+pixel_seek );
+		
+		if ( enable_aoccl )
+		{
+			/* Trace ambient occlusion */
+			uint32 *pixel_p = render_output_write + pixel_seek;
+			for( r=0; r<num_rays; r+=4,pixel_p+=4 )
+			{
+				#define AO_SAMP 8
+				__m128 nx, ny, nz;
+				int s, rr;
+				int o[4];
+				__m128i p, u;
+				
+				if ( *(uint32*)(mat_p0+r) == 0 )
+					continue;
+				
+				nx = _mm_load_ps( ray_dx+r );
+				ny = _mm_load_ps( ray_dy+r );
+				ny = _mm_load_ps( ray_dz+r );
+				
+				/*
+				_mm_store_si128( (void*) (pixel_p+r), normal_to_color( _mm_load_ps(dx), _mm_load_ps(dy), _mm_load_ps(dz) ) );
+				continue;
+				*/
+				
+				for( rr=0; rr<4; rr++ ) {
+					Ray ray;
+					int hits = 0;
+					float dx[AO_SAMP], dy[AO_SAMP], dz[AO_SAMP];
+					
+					ray.o[0]=ray_ox[r+rr];
+					ray.o[1]=ray_oy[r+rr];
+					ray.o[2]=ray_oz[r+rr];
+					
+					for( s=0; s<AO_SAMP; s+=4 )
+						calc_ao_rays( dx+s, dy+s, dz+s, nx, ny, nz, fnv1a_hash( s*r ) + rr + s*s + s );
+					
+					for( s=0; s<AO_SAMP; s++ )
+					{
+						float z;
+						uint8 m;
+						ray.d[0]=dx[s];
+						ray.d[1]=dy[s];
+						ray.d[2]=dz[s];
+						oc_traverse( the_volume, &ray, &m, &z );
+						hits += ( m != 0 );
+					}
+					
+					o[rr] = ( hits*hits << 4 ) / AO_SAMP;
+				}
+				
+				u = _mm_load_si128( (void*) o );
+				u = _mm_or_si128( u, _mm_slli_si128( u, 1 ) );
+				u = _mm_or_si128( u, _mm_slli_si128( u, 2 ) );
+				
+				#if 1
+				_mm_store_si128( (void*) pixel_p, u );
+				#else
+				p = _mm_load_si128( (void*) pixel_p );
+				p = _mm_subs_epu8( p, u );
+				_mm_store_si128( (void*) pixel_p, p );
+				#endif
+			}
+		}
 	}
 }
