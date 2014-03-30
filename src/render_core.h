@@ -8,7 +8,7 @@
 
 #define MAX_DEPTH_VALUE 100000
 
-#define ENABLE_DAC 1
+#define ENABLE_DAC 0
 
 #define ENABLE_RAYCAST 1
 #define ENABLE_GAMMA_CORRECTION 0 /* enables/disables 3 sqrts per pixel */
