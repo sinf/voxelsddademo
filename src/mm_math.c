@@ -26,10 +26,3 @@ static void normalize_vec( void* restrict px, void* restrict py, void* restrict 
 	_mm_store_ps( py, _mm_mul_ps( y, t ) );
 	_mm_store_ps( pz, _mm_mul_ps( z, t ) );
 }
-
-static void translate_vector( void* restrict out_x, void* restrict out_y, void* restrict out_z, __m128 const x, __m128 const y, __m128 const z, __m128 const * restrict m )
-{
-	_mm_store_ps( out_x, dot_prod( x, y, z, m[0], m[1], m[2] ) );
-	_mm_store_ps( out_y, dot_prod( x, y, z, m[3], m[4], m[5] ) );
-	_mm_store_ps( out_z, dot_prod( x, y, z, m[6], m[7], m[8] ) );
-}

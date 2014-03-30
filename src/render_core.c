@@ -105,15 +105,11 @@ void get_primary_ray( Ray *ray, const Camera *c, int x, int y )
 	multiply_vec_mat3f( ray->d, c->eye_to_world, ray->d );
 }
 
-static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_mat_p )
+static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_mat_p, __m128i shade_bits )
 {
-	static const uint32 stored_shade_bits[] = {0x20202020, 0x20202020, 0x20202020, 0x20202020};
-	__m128i mat, visible, zero, shade_bits;
-	
+	__m128i mat, visible, zero;
 	mat = _mm_load_si128( mat_p );
 	zero = _mm_setzero_si128();
-	shade_bits = _mm_load_si128( (void*) stored_shade_bits );
-	
 	visible = _mm_cmpeq_epi8( _mm_load_si128( shadow_mat_p ), zero );
 	mat = _mm_or_si128( _mm_andnot_si128( visible, shade_bits ), mat );
 	_mm_store_si128( mat_p, mat );
@@ -340,7 +336,7 @@ static void generate_primary_rays(
 {
 	float u0f, duf;
 	__m128 u0, u, v, w, du, dv;
-	__m128 mvp[9];
+	__m128 m0, m1, m2, m3, m4, m5, m6, m7, m8;
 	size_t r, y, x;
 	__m128 ox, oy, oz;
 	
@@ -356,16 +352,23 @@ static void generate_primary_rays(
 	dv = _mm_set1_ps( screen_uv_scale[1] );
 	w = _mm_set1_ps( calc_raydir_z() );
 	
-	for( x=0; x<9; x++ ) {
-		mvp[x] = _mm_set1_ps( camera.eye_to_world[x] );
-	}
+	m0 = _mm_set1_ps( camera.eye_to_world[0] );
+	m1 = _mm_set1_ps( camera.eye_to_world[1] );
+	m2 = _mm_set1_ps( camera.eye_to_world[2] );
+	m3 = _mm_set1_ps( camera.eye_to_world[3] );
+	m4 = _mm_set1_ps( camera.eye_to_world[4] );
+	m5 = _mm_set1_ps( camera.eye_to_world[5] );
+	m6 = _mm_set1_ps( camera.eye_to_world[6] );
+	m7 = _mm_set1_ps( camera.eye_to_world[7] );
+	m8 = _mm_set1_ps( camera.eye_to_world[8] );
 	
 	for( r=0,y=start_row; y<end_row; y++ )
 	{
 		u = u0;
 		for( x=0; x<resx; x+=4,r+=4 )
 		{
-			__m128 dx, dy, dz;
+			__m128 dx, dy, dz,
+			wdx, wdy, wdz;
 			
 			/* For a horizontal field of view of 65 degrees the average unnormalized ray length is 0.143738
 			This information could be used to make vector normalization faster */
@@ -374,10 +377,14 @@ static void generate_primary_rays(
 			dx = u;
 			dy = v;
 			dz = w;
-			normalize_vec( &dx, &dy, &dz, dx, dy, dz );
 			
-			/* Convert to world space */
-			translate_vector( ray_dx+r, ray_dy+r, ray_dz+r, dx, dy, dz, mvp );
+			/* Multiply to the eye-to-world rotation matrix */
+			wdx = dot_prod( dx, dy, dz, m0, m1, m2 );
+			wdy = dot_prod( dx, dy, dz, m3, m4, m5 );
+			wdz = dot_prod( dx, dy, dz, m6, m7, m8 );
+			
+			/* Normalize and store */
+			normalize_vec( ray_dx+r, ray_dy+r, ray_dz+r, wdx, wdy, wdz );
 			
 			/* All rays start from the same coordinates */
 			_mm_store_ps( ray_ox+r, ox );
@@ -404,7 +411,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	
 	float *depth_p0;
 	uint8 *mat_p, *mat_p0;
-	__m128 lx, ly, lz, depth_offset;
 	
 	num_rays = resx * resy;
 	ray_ox = ray_buffer;
@@ -421,8 +427,6 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	mat_p = mat_p0;
 	
 	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz );
-	
-	num_rays &= ~7;
 	
 	if ( enable_raycast ) {
 		/* Trace primary rays */
@@ -443,107 +447,115 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		}
 	}
 	
-	/* Light origin */
-	lx = _mm_load_ps( light_x );
-	ly = _mm_load_ps( light_y );
-	lz = _mm_load_ps( light_z );
-	
-	/* Prevents self-occlusion problem with shadows */
-	depth_offset = _mm_set1_ps( 0.001f );
-	
-	/* Generate shadow rays */
-	for( r=0; r<num_rays; r+=4 )
+	if ( !( enable_shadows || enable_phong || show_normals ) )
 	{
-		__m128
-		ox, oy, oz,
-		dx, dy, dz,
-		wx, wy, wz,
-		depth;
-		
-		ox = _mm_load_ps( ray_ox+r );
-		oy = _mm_load_ps( ray_oy+r );
-		oz = _mm_load_ps( ray_oz+r );
-		
-		dx = _mm_load_ps( ray_dx+r );
-		dy = _mm_load_ps( ray_dy+r );
-		dz = _mm_load_ps( ray_dz+r );
-		
-		/* Compute world space coordinates of the primary ray intersection */
-		depth = _mm_load_ps( depth_p0+r );
-		depth = _mm_sub_ps( depth, depth_offset );
-		wx = _mm_add_ps( ox, _mm_mul_ps( dx, depth ) );
-		wy = _mm_add_ps( oy, _mm_mul_ps( dy, depth ) );
-		wz = _mm_add_ps( oz, _mm_mul_ps( dz, depth ) );
-		_mm_store_ps( ray_ox+r, wx );
-		_mm_store_ps( ray_oy+r, wy );
-		_mm_store_ps( ray_oz+r, wz );
-		
-		/* Compute vector to light */
-		dx = _mm_sub_ps( lx, wx );
-		dy = _mm_sub_ps( ly, wy );
-		dz = _mm_sub_ps( lz, wz );
-		normalize_vec( ray_dx+r, ray_dy+r, ray_dz+r, dx, dy, dz );
+		/* Just put the material color to screen */
+		uint32 *out_p = render_output_write + pixel_seek;
+		for( r=0; r<num_rays; r++ )
+			out_p[r] = materials[mat_p0[r]].color;
 	}
+	else
+	{
+		__m128 lx, ly, lz, depth_offset;
+		
+		/* Light origin */
+		lx = _mm_load_ps( light_x );
+		ly = _mm_load_ps( light_y );
+		lz = _mm_load_ps( light_z );
+		
+		/* Prevents self-occlusion problem with shadows */
+		depth_offset = _mm_set1_ps( 0.001f );
+		
+		/* Generate shadow rays */
+		for( r=0; r<num_rays; r+=4 )
+		{
+			__m128
+			ox, oy, oz,
+			dx, dy, dz,
+			wx, wy, wz,
+			depth;
+			
+			ox = _mm_load_ps( ray_ox+r );
+			oy = _mm_load_ps( ray_oy+r );
+			oz = _mm_load_ps( ray_oz+r );
+			
+			dx = _mm_load_ps( ray_dx+r );
+			dy = _mm_load_ps( ray_dy+r );
+			dz = _mm_load_ps( ray_dz+r );
+			
+			/* Compute world space coordinates of the primary ray intersection */
+			depth = _mm_load_ps( depth_p0+r );
+			depth = _mm_sub_ps( depth, depth_offset );
+			wx = _mm_add_ps( ox, _mm_mul_ps( dx, depth ) );
+			wy = _mm_add_ps( oy, _mm_mul_ps( dy, depth ) );
+			wz = _mm_add_ps( oz, _mm_mul_ps( dz, depth ) );
+			_mm_store_ps( ray_ox+r, wx );
+			_mm_store_ps( ray_oy+r, wy );
+			_mm_store_ps( ray_oz+r, wz );
+			
+			/* Compute vector to light */
+			dx = _mm_sub_ps( lx, wx );
+			dy = _mm_sub_ps( ly, wy );
+			dz = _mm_sub_ps( lz, wz );
+			normalize_vec( ray_dx+r, ray_dy+r, ray_dz+r, dx, dy, dz );
+		}
 	
-	if ( enable_shadows )
-	{	
-		if ( enable_raycast ) {
-			if ( use_dac_method )
-			{
-				const float *o[3], *d[3];
-				__m128i *shadow_buf = aligned_alloc( 16, num_rays );
-				
-				o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
-				d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
-				oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
-				mat_p = mat_p0;
-				
-				for( r=0; r<num_rays; r+=16 )
-					calc_shadow_mat( mat_p+r, shadow_buf+r );
-				
-				free( shadow_buf );
-			}
-			else
-			{
-				/* Trace shadows */
-				mat_p = mat_p0;
-				
-				for( r=0; r<num_rays; r+=16 )
+		if ( enable_shadows )
+		{
+			static const uint32 stored_shade_bits[] = {0x20202020, 0x20202020, 0x20202020, 0x20202020};
+			__m128i shade_bits;
+			
+			shade_bits = _mm_load_si128( (void*) stored_shade_bits );
+			
+			if ( enable_raycast ) {
+				if ( use_dac_method )
 				{
-					uint8 shadow_m[16] = {0};
-					int s;
+					const float *o[3], *d[3];
+					__m128i *shadow_buf = aligned_alloc( 16, num_rays );
 					
-					for( s=0; s<16; s++ )
+					o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
+					d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
+					oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
+					mat_p = mat_p0;
+					
+					for( r=0; r<num_rays; r+=16 )
+						calc_shadow_mat( mat_p+r, shadow_buf+r, shade_bits );
+					
+					free( shadow_buf );
+				}
+				else
+				{
+					/* Trace shadows */
+					mat_p = mat_p0;
+					
+					for( r=0; r<num_rays; r+=16 )
 					{
-						Ray ray;
-						float z;
-						int k = r + s;
+						uint8 shadow_m[16] = {0};
+						int s;
 						
-						if ( mat_p[k] == 0 )
-							continue; /* the sky doesn't receive shadows */
+						for( s=0; s<16; s++ )
+						{
+							Ray ray;
+							float z;
+							int k = r + s;
+							
+							if ( mat_p[k] == 0 )
+								continue; /* the sky doesn't receive shadows */
+							
+							ray.o[0]=ray_ox[k]; ray.o[1]=ray_oy[k]; ray.o[2]=ray_oz[k];
+							ray.d[0]=ray_dx[k]; ray.d[1]=ray_dy[k]; ray.d[2]=ray_dz[k];
+							oc_traverse( the_volume, &ray, shadow_m+s, &z );
+						}
 						
-						ray.o[0]=ray_ox[k]; ray.o[1]=ray_oy[k]; ray.o[2]=ray_oz[k];
-						ray.d[0]=ray_dx[k]; ray.d[1]=ray_dy[k]; ray.d[2]=ray_dz[k];
-						oc_traverse( the_volume, &ray, shadow_m+s, &z );
+						calc_shadow_mat( mat_p+r, shadow_m, shade_bits );
 					}
-					
-					calc_shadow_mat( mat_p+r, shadow_m );
 				}
 			}
 		}
-	}
-	
-	if ( enable_phong || show_normals )
-	{
+		
 		shade_pixels( start_row, end_row,
 		ray_dx, ray_dy, ray_dz, /* vectors to light */
 		ray_ox, ray_oy, ray_oz, /* world space coords */
 		mat_p0, render_output_write+pixel_seek );
-	}
-	else
-	{
-		uint32 *out_p = render_output_write + pixel_seek;
-		for( r=0; r<num_rays; r++ )
-			out_p[r] = materials[mat_p0[r]].color;
 	}
 }
