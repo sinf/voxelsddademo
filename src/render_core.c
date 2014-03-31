@@ -472,10 +472,10 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		} else {
 			for( r=0; r<num_rays; r++ )
 			{
-				Ray ray;
-				ray.o[0]=ray_ox[r]; ray.o[1]=ray_oy[r]; ray.o[2]=ray_oz[r];
-				ray.d[0]=ray_dx[r]; ray.d[1]=ray_dy[r]; ray.d[2]=ray_dz[r];
-				oc_traverse( the_volume, &ray, mat_p0+r, depth_p0+r );
+				oc_traverse(
+				the_volume, mat_p0+r, depth_p0+r,
+				ray_ox[r], ray_oy[r], ray_oz[r],
+				ray_dx[r], ray_dy[r], ray_dz[r] );
 			}
 		}
 	}
@@ -591,16 +591,16 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 						
 						for( s=0; s<16; s++ )
 						{
-							Ray ray;
 							float z;
 							int k = r + s;
 							
 							if ( mat_p0[k] == 0 )
 								continue; /* the sky doesn't receive shadows */
 							
-							ray.o[0]=ray_ox[k]; ray.o[1]=ray_oy[k]; ray.o[2]=ray_oz[k];
-							ray.d[0]=ray_dx[k]; ray.d[1]=ray_dy[k]; ray.d[2]=ray_dz[k];
-							oc_traverse( the_volume, &ray, shadow_m+s, &z );
+							oc_traverse(
+							the_volume, shadow_m+s, &z,
+							ray_ox[k], ray_oy[k], ray_oz[k],
+							ray_dx[k], ray_dy[k], ray_dz[k] );
 						}
 						
 						calc_shadow_mat( mat_p0+r, shadow_m, shade_bits );
@@ -641,12 +641,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				
 				for( rr=0; rr<4; rr++ ) {
 					float dx[AO_SAMP], dy[AO_SAMP], dz[AO_SAMP];
-					Ray ray;
 					float occl = 0;
-					
-					ray.o[0]=ray_ox[r+rr];
-					ray.o[1]=ray_oy[r+rr];
-					ray.o[2]=ray_oz[r+rr];
 					
 					for( s=0; s<AO_SAMP; s+=4 )
 					{
@@ -673,10 +668,10 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 						float z;
 						uint8 m;
 						
-						ray.d[0]=dx[s];
-						ray.d[1]=dy[s];
-						ray.d[2]=dz[s];
-						oc_traverse( the_volume, &ray, &m, &z );
+						oc_traverse(
+						the_volume, &m, &z,
+						ray_ox[r+rr], ray_oy[r+rr], ray_oz[r+rr],
+						dx[s], dy[s], dz[s] );
 						
 						occl += ( 1.0 - fmin( z, falloff ) / falloff ) * 255.0f / AO_SAMP;
 					}

@@ -118,7 +118,7 @@ static void shoot( int win_x, int win_y, int m )
 	y = win_y / (float) screen->h * render_resy;
 	
 	get_primary_ray( &ray, &camera, x, y );
-	oc_traverse( the_volume, &ray, &mat, &depth );
+	oc_traverse( the_volume, &mat, &depth, ray.o[0], ray.o[1], ray.o[2], ray.d[0], ray.d[1], ray.d[2] );
 	
 	if ( mat != 0 )
 	{

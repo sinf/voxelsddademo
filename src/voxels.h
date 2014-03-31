@@ -49,7 +49,4 @@ void oc_clear( Octree *oc, int m );
 extern int oc_show_travel_depth; /* Replaces material with travel depth. Won't exceed MAX_MATERIALS */
 extern int oc_detail_level; /* Maximum recursion level. Used for global LOD. Use 0 for full detail  */
 
-/* Ray traversal - used by raycaster.c and main.c */
-void oc_traverse( const Octree *oc, const Ray *ray, uint8 *output_mat, float *output_z );
-
 #endif

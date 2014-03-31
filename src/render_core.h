@@ -46,4 +46,8 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer );
 /* Makes render_output_rgba point to the last frame. The next frame will be rendered into another buffer */
 void swap_render_buffers( void );
 
+
+/* Ray traversal function. see oc_traverse.c*/
+void oc_traverse( const Octree *oc, uint8 *output_mat, float *output_z, float ox, float oy, float oz, float dx, float dy, float dz );
+
 #endif
