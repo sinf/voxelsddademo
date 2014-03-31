@@ -25,6 +25,7 @@ static size_t intersect_with_aabb( uint32 *ray_ids, size_t num_rays,
 		uint32 id = ray_ids[r];
 		float tmaxs[3], tmins[3];
 		float tmax, tmin;
+		uint32 *last;
 		
 		if ( id + 1 )
 		{
@@ -33,7 +34,7 @@ static size_t intersect_with_aabb( uint32 *ray_ids, size_t num_rays,
 				float o, d;
 				float t0, t1;
 				
-				d = ray_d[k][id];
+				d = 1.0f / ray_d[k][id];
 				o = ray_o[k][id];
 				
 				/* d = 1.0f / d; */
@@ -50,17 +51,17 @@ static size_t intersect_with_aabb( uint32 *ray_ids, size_t num_rays,
 			tmin = fmax( tmins[0], fmax( tmins[1], tmins[2] ) );
 			tmax = fmin( tmaxs[0], fmin( tmaxs[1], tmaxs[2] ) );
 			out_depth[id] = tmin;
-		}
-		else
-		{
-			tmax = -1;
+			
+			if ( tmax > 0.0f && tmin < tmax ) {
+				/* The ray did not miss the box. Do not reject! */
+				continue;
+			}
 		}
 		
-		if ( tmax < 0.0f || tmin > tmax ) {
-			uint32 *last = --num_rays + ray_ids;
-			ray_ids[r--] = *last;
-			*last = id;
-		}
+		/* The ray was terminated before or it missed the box, so reject it */
+		last = --num_rays + ray_ids;
+		ray_ids[r--] = *last;
+		*last = id;
 	}
 	return num_rays;
 }
@@ -88,7 +89,7 @@ static void process_leaf( const OctreeNode *node,
 	{
 		size_t id = id_array[r];
 		out_mat[id] = mat;
-		id_array[r] = 0xFFFFFFFF; /* kill this ray */
+		id_array[r] = -1; /* kill this ray */
 	}
 }
 
@@ -152,6 +153,9 @@ void oc_traverse_dac( const Octree oc[1],
 	float aabb_max[3];
 	int t;
 	
+	if ( !ray_count )
+		return;
+	
 	aabb_max[0] = aabb_max[1] = aabb_max[2] = oc->size;
 	id_arrays[0] = aligned_alloc( 16, 8 * sizeof( uint32 ) * ray_count );
 	
@@ -171,8 +175,6 @@ void oc_traverse_dac( const Octree oc[1],
 				/* Ray direction is negative. Child nodes should be traversed in reverse order along this axis. */
 				iter |= 4 >> k;
 			}
-			
-			((float*) ray_d[k])[r] = 1.0f / ray_d[k][r];
 		}
 		
 		id_arrays[iter][ id_count[iter]++ ] = r;
@@ -186,12 +188,5 @@ void oc_traverse_dac( const Octree oc[1],
 			out_mat, out_depth,
 			t,
 			aabb_min, aabb_max );
-	}
-	
-	for( r=0; r<ray_count; r++ )
-	{
-		int k;
-		for( k=0; k<3; k++ )
-			( (float*) ray_d[k] )[r] = 1.0f / ray_d[k][r];
 	}
 }
