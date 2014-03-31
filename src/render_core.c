@@ -26,7 +26,9 @@ float materials_spec[NUM_MATERIALS][4];
 int enable_shadows = 0;
 int enable_phong = 1;
 int show_normals = 0;
-static const int enable_aoccl = 0; /* ambient occlusion */
+int show_depth_buffer = 0;
+int enable_aoccl = 0; /* ambient occlusion */
+int enable_dac_method = 1;
 
 static float screen_uv_scale[2];
 static float screen_uv_min[2];
@@ -433,8 +435,6 @@ static void generate_primary_rays(
 void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 {
 	const int enable_raycast = ENABLE_RAYCAST;
-	const int use_dac_method = ENABLE_DAC;
-	
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
 	
 	size_t r;
@@ -463,7 +463,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	
 	if ( enable_raycast ) {
 		/* Trace primary rays */
-		if ( use_dac_method )
+		if ( enable_dac_method )
 		{
 			const float *o[3], *d[3];
 			o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
@@ -480,12 +480,38 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		}
 	}
 	
-	if ( !( enable_shadows || enable_phong || show_normals ) )
+	if ( show_depth_buffer || !( enable_shadows || enable_phong || show_normals ) )
 	{
-		/* Just put the material color to screen */
 		uint32 *out_p = render_output_write + pixel_seek;
-		for( r=0; r<num_rays; r++ )
-			out_p[r] = materials_rgb[mat_p0[r]];
+		
+		if ( show_depth_buffer )
+		{
+			__m128 conv = _mm_set1_ps( 255.0f / the_volume->size );
+			__m128 byte = _mm_set1_ps( 255.0f );
+			
+			for( r=0; r<num_rays; r+=4 )
+			{
+				__m128 z;
+				__m128i c;
+				
+				z = _mm_load_ps( depth_p0+r );
+				z = _mm_mul_ps( z, conv );
+				z = _mm_min_ps( z, byte );
+				
+				c = _mm_cvtps_epi32( z );
+				c = _mm_or_si128(
+				_mm_or_si128( c, _mm_slli_si128( c, 1 ) ),
+				_mm_or_si128( c, _mm_slli_si128( c, 2 ) ) );
+				
+				_mm_store_si128( (void*)( out_p+r ), c );
+			}
+		}
+		else
+		{
+			/* Just put the material color to screen */
+			for( r=0; r<num_rays; r++ )
+				out_p[r] = materials_rgb[mat_p0[r]];
+		}
 	}
 	else
 	{
@@ -541,7 +567,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			shade_bits = _mm_load_si128( (void*) stored_shade_bits );
 			
 			if ( enable_raycast ) {
-				if ( use_dac_method )
+				if ( enable_dac_method )
 				{
 					const float *o[3], *d[3];
 					__m128i *shadow_buf = aligned_alloc( 16, num_rays );

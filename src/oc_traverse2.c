@@ -49,7 +49,6 @@ static size_t intersect_with_aabb( uint32 *ray_ids, size_t num_rays,
 			
 			tmin = fmax( tmins[0], fmax( tmins[1], tmins[2] ) );
 			tmax = fmin( tmaxs[0], fmin( tmaxs[1], tmaxs[2] ) );
-			
 			out_depth[id] = tmin;
 		}
 		else
