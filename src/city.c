@@ -65,6 +65,7 @@ static void fill_tile( Octree *oc, float pos[3], double scale, int tile )
 		box.max[n] = pos[n] + scale;
 	}
 	
+	box.min[3] = box.max[3] = 0;
 	memcpy( &box_copy, &box, sizeof(box) );
 	
 	if ( tile == T_DIRT )

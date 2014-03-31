@@ -1,3 +1,4 @@
+#include <xmmintrin.h>
 #include <float.h>
 #include "aabb.h"
 
@@ -156,73 +157,49 @@ OverlapStatus aabb_aabb_overlap( const aabb3f *a, const aabb3f *b )
 	return OVERLAP;
 }
 
-#include <xmmintrin.h>
-#define clamp_ps(x,min,max) _mm_max_ps( _mm_min_ps((x),(max)), (min) )
-
+#define fmin(x,y) ((x)<(y)?(x):(y))
+#define fmax(x,y) ((x)>(y)?(x):(y))
 OverlapStatus aabb_sphere_overlap( aabb3f *box, const Sphere *sph )
 {
-	float dist = 0.0f;
-	int n;
+	float minx, miny, minz, maxx, maxy, maxz;
+	float px, py, pz;
+	float dx, dy, dz;
+	float ox, oy, oz;
+	float sq;
+	float r2;
+	float fc;
+	int in;
 	
-	box->min[3] = box->max[3] = 0.0f;
+	minx = box->min[0];
+	miny = box->min[1];
+	minz = box->min[2];
 	
-	#if PADDED_VEC3_SIZE == 4
-	{
-		/* 179 instructions */
-		const __m128 o = _mm_load_ps( sph->o );
-		const __m128 min = _mm_load_ps( box->min );
-		const __m128 max = _mm_load_ps( box->max );
-		float temp[4];
-		__m128 m;
-		
-		m = clamp_ps( o, min, max );
-		m = _mm_sub_ps( o, m );
-		m = _mm_mul_ps( m, m );
-		
-		_mm_store_ps( temp, m );
-		
-		for( n=0; n<4; n++ )
-			dist += temp[n];
-	}
-	#else
-	for( n=0; n<3; n++ )
-	{
-		/* 218 instructions */
-		float temp;
-		
-		temp = clamp( sph->o[n], box->min[n], box->max[n] );
-		temp = sph->o[n] - temp;
-		
-		dist += temp * temp;
-	}
-	#endif
+	maxx = box->max[0];
+	maxy = box->max[1];
+	maxz = box->max[2];
 	
-	dist = sqrtf( dist );
-	if ( dist < sph->r )
-	{
-		float box_r = FLT_MAX;
-		
-		for( n=0; n<PADDED_VEC3_SIZE; n++ )
-		{
-			/* GCC manages to vectorize this without help of insintrics */
-			float s = box->max[n] - box->min[n];
-			box_r = ( s > box_r ) ? s : box_r;
-		}
-		
-		box_r = box_r * sqrtf( 3.0f );
-		
-		/*
-		Above could be written as:
-			box_r = sqrtf( box_r * box_r * 3.0f );
-		
-		box_r is now radius of the AABB's bounding sphere
-		*/
-		
-		if ( (dist+box_r) < sph->r )
-			return INSIDE;
-		
-		return OVERLAP;
-	}
+	ox = sph->o[0];
+	oy = sph->o[1];
+	oz = sph->o[2];
+	r2 = sph->r;
+	r2 *= r2;
 	
-	return NO_TOUCH;
+	/* Distance to furthest corner */
+	dx = fmax( ox - minx, maxx - ox );
+	dy = fmax( oy - miny, maxy - oy );
+	dz = fmax( oz - minz, maxz - oz );
+	fc = dx*dx + dy*dy + dz*dz;
+	
+	/* Clamp sphere origin into the box */
+	px = fmax( fmin( ox, maxx ), minx );
+	py = fmax( fmin( oy, maxy ), miny );
+	pz = fmax( fmin( oz, maxz ), minz );
+	
+	/* Compute squared distance */
+	dx = px - ox;
+	dy = py - oy;
+	dz = pz - oz;
+	sq = dx*dx + dy*dy + dz*dz;
+	
+	return ( sq < r2 ) << ( fc < r2 );
 }
