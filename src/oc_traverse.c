@@ -32,6 +32,7 @@ static int traversal_func( const OctreeNode *parent, uint8 *out_m, float *out_z,
 		tsplitx = ( tminx + tmaxx ) * 0.5f;
 		tsplity = ( tminy + tmaxy ) * 0.5f;
 		tsplitz = ( tminz + tmaxz ) * 0.5f;
+		
 		level--;
 		
 		for( n=0; n<8; n++ )
