@@ -168,7 +168,6 @@ OverlapStatus aabb_sphere_overlap( aabb3f *box, const Sphere *sph )
 	float sq;
 	float r2;
 	float fc;
-	int in;
 	
 	minx = box->min[0];
 	miny = box->min[1];
