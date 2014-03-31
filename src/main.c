@@ -246,16 +246,12 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 		"Vol.s: %d^3\n"
 		"Depth: %d/%d\n"
 		"Nodes: %u\n"
-		"Mat=%d\n"
-		"DAC=%d\n"
-		,
+		"Mat=%d\n",
 		(int) the_volume->size,
 		(int) the_volume->root_level - oc_detail_level,
 		(int) the_volume->root_level,
 		the_volume->num_nodes,
-		brush_mat,
-		enable_dac_method
-		);
+		brush_mat );
 	
 	snprintf( buf, sizeof(buf), "%ux%u|%4u ms|%u K rays|%3u.%03u M rays/sec ",
 		(unsigned) render_resx, (unsigned) render_resy,
@@ -589,15 +585,6 @@ int main( int argc, char **argv )
 						case SDLK_u:
 							upscale_shift = !upscale_shift;
 							resize_render_output( ( screen->w & ~0xF ) >> upscale_shift, screen->h >> upscale_shift );
-							break;
-						case SDLK_y:
-							show_depth_buffer = !show_depth_buffer;
-							break;
-						case SDLK_o:
-							enable_aoccl = !enable_aoccl;
-							break;
-						case SDLK_i:
-							enable_dac_method = !enable_dac_method;
 							break;
 						
 						case SDLK_ESCAPE:
