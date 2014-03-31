@@ -116,17 +116,20 @@ static void calc_shadow_mat( void* restrict mat_p, void const* restrict shadow_m
 	_mm_store_si128( mat_p, mat );
 }
 
-/* Returns 255>>shr broadcasted to all 4 slots */
-#define get_255_shr(junk,shr) \
-_mm_cvtepi32_ps( _mm_srli_epi32( _mm_cmpeq_epi32(junk,junk), 24+(shr) ) )
-
 static __m128i normal_to_color( __m128 nx, __m128 ny, __m128 nz )
 {
+	__m128 rf, gf, bf, h;
 	__m128i r, g, b;
-	__m128 byte_half = get_255_shr( r, 1 ); /* get 127 */
-	r = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( nx, byte_half ), byte_half ) );
-	g = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( ny, byte_half ), byte_half ) );
-	b = _mm_cvtps_epi32( _mm_add_ps( _mm_mul_ps( nz, byte_half ), byte_half ) );
+	
+	h = _mm_set1_ps( 127.1f );
+	rf = _mm_add_ps( _mm_mul_ps( nx, h ), h );
+	gf = _mm_add_ps( _mm_mul_ps( ny, h ), h );
+	bf = _mm_add_ps( _mm_mul_ps( nz, h ), h );
+	
+	r = _mm_cvtps_epi32( rf );
+	g = _mm_cvtps_epi32( gf );
+	b = _mm_cvtps_epi32( bf );
+	
 	r = _mm_slli_si128( r, 2 );
 	g = _mm_slli_si128( g, 1 );
 	return _mm_or_si128( g, _mm_or_si128( r, b ) );
@@ -162,8 +165,7 @@ __m128 tlx, __m128 tly, __m128 tlz /* vector to light */
 	/* accumulate bytes into this register */
 	colors = _mm_setzero_si128();
 	
-	/* get 255.0 */
-	max_byte = get_255_shr( colors, 0 );
+	max_byte = _mm_set1_ps( 255 );
 	
 	for( k=0; k<3; k++ )
 	{
@@ -191,55 +193,27 @@ __m128 tlx, __m128 tly, __m128 tlz /* vector to light */
 	return colors;
 }
 
-static uint64 fnv1a_hash( uint64 x )
-{
-	uint64 h = 2166136261;
-	int t;
-	for( t=0; t<8; t++ ) {
-		x >>= 4;
-		h = h ^ ( x & 0xF );
-		h *= 16777619;
-		h &= 0xFFFFFFFF;
-	}
-	return h;
-}
 
-static void calc_ao_rays( void *xp, void *yp, void *zp, __m128 nx, __m128 ny, __m128 nz, int k )
+/* Generates 4 random values in range [-1,1)
+gcc can vectorize no problem
+static uint32 state[4] = {0x09F91102,0x9D74E35B,0xD84156C5,0x635688C0};
+*/
+static __m128 randf( uint32 s[4] )
 {
-	static const float
-	lut_x[] = {
-0.17608480733726006, -0.22311073318820154, 0.03387636667527373, 0.27668057899237797, -0.5035291840643238, 0.4729615227533923, -0.1568384393943196, -0.296495567066451, 0.6375586537073917, -0.657270942922291, 0.3139277056945738, 0.22980628205915257, -0.6860105272412337, 0.7969168510214679, -0.48150656533876957, -0.11010980532366277, 0.6689611871564978, -0.8906857415156827, 0.6426630271806866, -0.042521530715078804, -0.5979054381466168, 0.9361981733488518, -0.7838510465201524, 0.21159681451541415, 0.4833325303255987, -0.9328318142586943, 0.8942820818781708, -0.38222476698907004, -0.3364217546663529, 0.8824839190100603, -0.9659070760328131, 0.5407717140962143, 0.16935549543945927, -0.7897540927167819, 0.9935396814284652, -0.6750052493244947, 0.004829801391683504, 0.6618866869707114, -0.9749744764429643, 0.7743722856595951, -0.17255385351723249, -0.5085937894852695, 0.9110404352134207, -0.8302492360063659, 0.3199986260206788, 0.34184723273622036, -0.8055612930008001, 0.8360278347780077, -0.4332244981219977, -0.1757751277808731, 0.6651993770836362, -0.7867953829706278, 0.497699465479315, 0.02699220371529747, -0.49910714050739646, 0.6778584573739476, -0.4959101352871499, 0.08348071572637865, 0.3178957953001336, -0.49832414649111745, 0.3956506863211547, -0.11957042111618797, -0.12556607825354404, 0.16209996356578596
-	}, lut_y[] = {
-0.0, 0.20438770782809604, -0.38600372557254214, 0.360880820470474, -0.08906722276189095, -0.30085940631762265, 0.5834311770066409, -0.57088417221442, 0.2328353977766658, 0.27131189057069055, -0.6708452727509833, 0.7326586395458319, -0.3975571228002394, -0.1751999341695868, 0.6848935405671901, -0.8497097681835751, 0.5638011967468403, 0.03683265175979679, -0.6395355485584487, 0.9195673052042719, -0.7164905417447618, 0.12596414010849727, 0.545383141694224, -0.940569055126698, 0.8434797119694427, -0.2975987914656791, -0.41318100441167965, 0.9133065404754042, -0.9353381807465213, 0.4638088152069185, 0.25461000539008943, -0.8410242639831756, 0.9854311622530797, -0.6116299595442433, -0.0823127317128023, 0.729660895731282, -0.9900511514025508, 0.7296334682468557, -0.09036041533640489, -0.5877209563877525, 0.9485085803572646, -0.8082064041270729, 0.24967841272553218, 0.42607020018518765, -0.8631413492122121, 0.8397392177608405, -0.3817705300227861, -0.25775631680212285, 0.7392208016566791, -0.818554114783267, 0.4725264787316605, 0.09805679329400425, -0.5847177536526527, 0.7401725510403583, -0.5064654940561399, 0.03465935864398168, 0.40974564926851953, -0.5983487314909354, 0.4616830597991392, -0.11466322164887624, -0.2241598621265619, 0.36857753427073864, -0.27529237978379434, 0.06877107812860624
-	}, lut_z[] = {
--0.984375, -0.953125, -0.921875, -0.890625, -0.859375, -0.828125, -0.796875, -0.765625, -0.734375, -0.703125, -0.671875, -0.640625, -0.609375, -0.578125, -0.546875, -0.515625, -0.484375, -0.453125, -0.421875, -0.390625, -0.359375, -0.328125, -0.296875, -0.265625, -0.234375, -0.203125, -0.171875, -0.140625, -0.109375, -0.078125, -0.046875, -0.015625, 0.015625, 0.046875, 0.078125, 0.109375, 0.140625, 0.171875, 0.203125, 0.234375, 0.265625, 0.296875, 0.328125, 0.359375, 0.390625, 0.421875, 0.453125, 0.484375, 0.515625, 0.546875, 0.578125, 0.609375, 0.640625, 0.671875, 0.703125, 0.734375, 0.765625, 0.796875, 0.828125, 0.859375, 0.890625, 0.921875, 0.953125, 0.984375
-	};
-	__m128 x, y, z, d;
-	__m128i di;
-	
-	k &= 0xF;
-	k <<= 2;
-	
-	/* Get a unit length vector */
-	x = _mm_load_ps( lut_x + k );
-	y = _mm_load_ps( lut_y + k );
-	z = _mm_load_ps( lut_z + k );
-	
-	/* Compare against the normal */
-	d = dot_prod( x, y, z, nx, ny, nz );
-	
-	/* Negate the vector if the dot product is negative */
-	di = _mm_castps_si128( d );
-	di = _mm_srli_epi32( di, 31 ); /* clear all but the sign bit */
-	di = _mm_slli_epi32( di, 31 );
-	d = _mm_castsi128_ps( di );
-	x = _mm_xor_ps( x, d );
-	y = _mm_xor_ps( y, d );
-	z = _mm_xor_ps( z, d );
-	
-	_mm_store_ps( xp, x );
-	_mm_store_ps( yp, y );
-	_mm_store_ps( zp, z );
+	__m128 f;
+	uint32 x[4];
+	int i;
+	for( i=0; i<4; i++ ) {
+		x[i] = s[i];
+		x[i] *= 1664525;
+		x[i] += 1013904223;
+		s[i] = x[i];
+		x[i] >>= 9;
+		x[i] |= 0x40000000;
+	}
+	f = _mm_load_ps( (float*) x );
+	f = _mm_sub_ps( f, _mm_set1_ps(3) );
+	return f;
 }
 
 /*
@@ -614,13 +588,14 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		ray_ox, ray_oy, ray_oz, /* world space coords */
 		mat_p0, render_output_write+pixel_seek );
 		
-		if ( enable_aoccl )
+		if ( enable_aoccl && !show_normals )
 		{
 			/* Trace ambient occlusion */
+			static uint32 state[4] = {0x09F91102,0x9D74E35B,0xD84156C5,0x635688C0};
 			uint32 *pixel_p = render_output_write + pixel_seek;
 			for( r=0; r<num_rays; r+=4,pixel_p+=4 )
 			{
-				#define AO_SAMP 8
+				#define AO_SAMP 32
 				__m128 nx, ny, nz;
 				int s, rr;
 				int o[4];
@@ -639,34 +614,53 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				*/
 				
 				for( rr=0; rr<4; rr++ ) {
-					Ray ray;
-					int hits = 0;
 					float dx[AO_SAMP], dy[AO_SAMP], dz[AO_SAMP];
+					Ray ray;
+					float occl = 0;
 					
 					ray.o[0]=ray_ox[r+rr];
 					ray.o[1]=ray_oy[r+rr];
 					ray.o[2]=ray_oz[r+rr];
 					
 					for( s=0; s<AO_SAMP; s+=4 )
-						calc_ao_rays( dx+s, dy+s, dz+s, nx, ny, nz, fnv1a_hash( s*r ) + rr + s*s + s );
+					{
+						__m128 vx, vy, vz, dot, sign_mask;
+						
+						sign_mask = _mm_castsi128_ps( _mm_set1_epi32( 0x80000000 ) );
+						vx = randf( state );
+						vy = randf( state );
+						vz = randf( state );
+						normalize_vec( &vx, &vy, &vz, vx, vy, vz );
+						dot = dot_prod( vx, vy, vz, nx, ny, nz );
+						dot = _mm_and_ps( dot, sign_mask );
+						vx = _mm_xor_ps( vx, dot );
+						vy = _mm_xor_ps( vy, dot );
+						vz = _mm_xor_ps( vz, dot );
+						_mm_store_ps( dx+s, vx );
+						_mm_store_ps( dy+s, vy );
+						_mm_store_ps( dz+s, vz );
+					}
 					
 					for( s=0; s<AO_SAMP; s++ )
 					{
+						float falloff = 50;
 						float z;
 						uint8 m;
+						
 						ray.d[0]=dx[s];
 						ray.d[1]=dy[s];
 						ray.d[2]=dz[s];
 						oc_traverse( the_volume, &ray, &m, &z );
-						hits += ( m != 0 );
+						
+						occl += ( 1.0 - fmin( z, falloff ) / falloff ) * 255.0f / AO_SAMP;
 					}
 					
-					o[rr] = ( hits*hits << 4 ) / AO_SAMP;
+					o[rr] = occl;
 				}
 				
 				u = _mm_load_si128( (void*) o );
-				u = _mm_or_si128( u, _mm_slli_si128( u, 1 ) );
-				u = _mm_or_si128( u, _mm_slli_si128( u, 2 ) );
+				u = _mm_or_si128( u, _mm_slli_epi32( u, 8 ) );
+				u = _mm_or_si128( u, _mm_slli_epi32( u, 16 ) );
 				
 				#if 1
 				_mm_store_si128( (void*) pixel_p, u );
