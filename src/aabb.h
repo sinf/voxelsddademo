@@ -44,7 +44,7 @@ typedef enum {
 	INSIDE /* a inside b */
 } OverlapStatus;
 
-OverlapStatus aabb_aabb_overlap( const aabb3f *a, const aabb3f *b );
+OverlapStatus aabb_aabb_overlap( const aabb3f * restrict a, const aabb3f * restrict b );
 
 /* Sets 4th components of bounding box to 0 */
 OverlapStatus aabb_sphere_overlap( aabb3f *a, const Sphere *b );

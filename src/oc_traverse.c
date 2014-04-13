@@ -75,9 +75,14 @@ void oc_traverse( const Octree *oc, uint8 *out_m, float *out_z, float ray_ox, fl
 	unsigned mask = 0;
 	float t0, t1, invd;
 	
+	/* The same thing:
+	mask |= ( 4 & (*(unsigned*)&d) >> 29 ) >> n;
+	mask |= ( 4 >> n ) * ( d < 0 );
+	*/
+	
 	#define compute_interval(n,x,d) do { \
 		/* Set the bit if direction is negative. Child nodes should then be traversed in reverse order. */ \
-		mask |= ( 4 & (*(unsigned*)&d) >> 29 ) >> n; \
+		mask |= ( 4 >> n ) * ( d < 0 ); \
 		/* Compute intervals */ \
 		invd = 1.0f / d; \
 		t0 = -x * invd; \
