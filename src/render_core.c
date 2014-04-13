@@ -28,7 +28,7 @@ int enable_phong = 1;
 int show_normals = 0;
 int show_depth_buffer = 0;
 int enable_aoccl = 0; /* ambient occlusion */
-int enable_dac_method = 1;
+int enable_dac_method = 0;
 
 static float screen_uv_scale[2];
 static float screen_uv_min[2];

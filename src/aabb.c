@@ -137,7 +137,7 @@ int intersect_aabb_nor( const Ray *ray, const aabb3f *aabb, float *enter, int *e
 	return 1;
 }
 
-OverlapStatus aabb_aabb_overlap( const aabb3f *a, const aabb3f *b )
+OverlapStatus aabb_aabb_overlap( const aabb3f * restrict a, const aabb3f * restrict b )
 {
 	int inside = 1;
 	int n;

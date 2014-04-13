@@ -43,6 +43,38 @@ static SDL_Surface *screen = NULL;
 static int benchmark_mode = 0;
 static int upscale_shift = 0;
 
+static float light_a1 = 0;
+static float light_a2 = 0;
+static float light_r = 1;
+static int moving_light = 0;
+
+static void get_light_pos( float p[3] )
+{
+	float x, y, z;
+	float t = 10000;
+	
+	light_a1 = fmod( light_a1, 2*M_PI );
+	light_a2 = fmod( light_a2, 2*M_PI );
+	
+	x = cos( light_a1 ) * sin( light_a2 ) * light_r * t;
+	z = sin( light_a1 ) * sin( light_a2 ) * light_r * t;
+	y = cos( light_a2 ) * light_r * t;
+	
+	x += light_r/2;
+	z += light_r/2;
+	
+	p[0] = x;
+	p[1] = y;
+	p[2] = z;
+}
+
+static void update_light_pos( void )
+{
+	float p[3];
+	get_light_pos( p );
+	set_light_pos( p[0], p[1], p[2] );
+}
+
 static void quit( /* any number of arguments */ )
 {
 	stop_render_threads();
@@ -161,14 +193,23 @@ void process_input( int screen_centre_x, int screen_centre_y )
 	{
 		/* MMB: fine zoom */
 		
-		float x = mouse_motion[0];
-		float y = mouse_motion[1];
-		float fine_zoom = sqrtf( x*x + y*y ) * 0.0005;
+		double x = mouse_motion[0];
+		double y = mouse_motion[1];
+		double fine_zoom = sqrtf( x*x + y*y ) * 0.0005;
+		
+		if ( SDL_GetModState() & KMOD_LSHIFT )
+			fine_zoom *= 0.01;
 		
 		if ( y < 0 )
 			fine_zoom = -fine_zoom;
 		
-		motion[2] += fine_zoom;
+		if ( moving_light ) {
+			light_r += fine_zoom;
+			update_light_pos();
+		} else {
+			motion[2] += fine_zoom;
+		}
+		
 		should_warp_mouse = 1;
 	}
 	else if ( hook_mouse )
@@ -176,7 +217,15 @@ void process_input( int screen_centre_x, int screen_centre_y )
 		/* Mouse look */
 		float x = mouse_motion[0] * -0.01f;
 		float y = mouse_motion[1] * -0.01f;
-		rotate_camera( &camera, x, y );
+		
+		if ( moving_light ) {
+			light_a1 += x;
+			light_a2 += y;
+			update_light_pos();
+		}
+		else
+			rotate_camera( &camera, x, y );
+		
 		should_warp_mouse = 1;
 	}
 	
@@ -282,8 +331,36 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	draw_text_f( surf, graph.bounds.x - 2 * GLYPH_W, graph.bounds.y + graph.bounds.h + 5,
 		"Avg: %-d", (unsigned)( ( graph.total / graph.bounds.w + 500000 )/ 1000000 ) );
 	
-	draw_text_f( surf, graph2.bounds.x - GLYPH_W, graph2.bounds.y + graph2.bounds.h + 5,
-		"Avg: %-d", (unsigned)( ( graph2.total / graph2.bounds.w + 500 ) / 1000 ) );
+	draw_text_f( surf, graph2.bounds.x - 2 * GLYPH_W, graph2.bounds.y + graph2.bounds.h + 5,
+		"Avg: %-d\n"
+		"FPS: %-3d\n"
+		, (unsigned)( ( graph2.total / graph2.bounds.w + 500 ) / 1000 ),
+		perf.frame_time ? (int)( 1000000 / perf.frame_time ) : 999 );
+	
+	if ( moving_light )
+	{
+		/* TODO:
+		Figure out screen space coordinates of the light
+		Draw text and some indicator arrow/box
+		
+		float w[3], e[3];
+		int x, y;
+		float ratio, u_scale, u_min, v_min, v_scale;
+		
+		get_light_pos( w );
+		multiply_vec_mat3f( e, camera.world_to_eye, w );
+		
+		ratio = render_resx / (float) render_resy;
+		u_min = -0.5;
+		u_scale = 1.0 / render_resx;
+		v_min = 0.5 / screen_ratio;
+		v_scale = -1.0 / render_resy / screen_ratio;
+		
+		x = e[0] / e[2] - u_min
+		
+		draw_text_f( surf,
+		*/
+	}
 }
 
 static void load_materials( SDL_PixelFormat *format )
@@ -420,7 +497,7 @@ int main( int argc, char **argv )
 		printf( "Warning: failed to load font: %s\n", SDL_GetError() );
 	
 	reset_camera();
-	set_light_pos( -the_volume->size, 2*the_volume->size, -the_volume->size );
+	update_light_pos();
 	
 	if ( n_threads > 0 ) {
 		start_render_threads( n_threads );
@@ -450,6 +527,11 @@ int main( int argc, char **argv )
 						hook_mouse = 0;
 						SDL_ShowCursor( 1 );
 					}
+					break;
+				
+				case SDL_KEYUP:
+					if ( event.key.keysym.sym == SDLK_l )
+						moving_light = 0;
 					break;
 				
 				case SDL_KEYDOWN:
@@ -598,6 +680,9 @@ int main( int argc, char **argv )
 							break;
 						case SDLK_i:
 							enable_dac_method = !enable_dac_method;
+							break;
+						case SDLK_l:
+							moving_light = !moving_light;
 							break;
 						
 						case SDLK_ESCAPE:
