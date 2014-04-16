@@ -22,18 +22,7 @@ typedef int vec4i[4];
 typedef float mat3f[9];
 typedef float mat4f[16];
 
-#if 0
-static __inline float inv_sqrtf( float x )
-{
-	float xhalf = 0.5f*x;
-	int i = *(int*)&x;
-	i = 0x5f3759df - (i>>1);
-	x = *(float*)&i;
-	return x*(1.5f - xhalf*x*x);
-}
-#else
-#define inv_sqrtf(x) (1.0f/sqrtf(x))
-#endif
+#define inv_sqrtf(x) (1.0f/(float)sqrt(x))
 
 /* Converts degrees to radians */
 #define radians(deg) ((deg)*0.0174532925f)
