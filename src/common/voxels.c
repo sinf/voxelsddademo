@@ -142,8 +142,7 @@ int get_mode_material( OctreeNode *node )
 int get_mode_material( OctreeNode *node )
 {
 	unsigned char count[NUM_MATERIALS] = {0};
-	unsigned char freq, freq_m;
-	int n;
+	unsigned char freq, freq_m, n;
 	
 	for( n=0; n<8; n++ ) {
 		int m = node->children[n].mat;
