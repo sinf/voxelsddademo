@@ -193,9 +193,9 @@ void process_input( int screen_centre_x, int screen_centre_y )
 	{
 		/* MMB: fine zoom */
 		
-		double x = mouse_motion[0];
-		double y = mouse_motion[1];
-		double fine_zoom = sqrtf( x*x + y*y ) * 0.0005;
+		float x = mouse_motion[0];
+		float y = mouse_motion[1];
+		float fine_zoom = (float) sqrt( x*x + y*y ) * 0.0005f;
 		
 		if ( SDL_GetModState() & KMOD_LSHIFT )
 			fine_zoom *= 0.01;
@@ -442,7 +442,26 @@ static const char HELP_TEXT[] = \
 "  -res=WxH    Window size\n"
 "  -d=N        Set maximum octree depth\n"
 "  -t=N        Rendering threads (0=single thread)\n"
-"  -bench      Run benchmark\n";
+"  -bench      Run benchmark\n"
+"Key mappings:\n"
+"  1,2,3,4,5: set brush radius\n"
+"  F1: dump octree to file\n"
+"  F2: load octree\n"
+"  F3: reset camera\n"
+"  F4: regenerate the volume\n"
+"  F5: toggle fullscreen\n"
+"  F6: switch shading modes\n"
+"  F7,f8: adjust octree traversal depth\n"
+"  F9,f10: adjust field of view\n"
+"  F11: toggle shadows\n"
+"  Space: grab cursor\n"
+"  P: enable phong\n"
+"  U: enable 2x upscaling\n"
+"  Y: show depth buffer\n"
+"  O: enable ambient occlusion\n"
+"  I: toggle traversal method\n"
+"  L: move light (hold)\n"
+"  ESC: quit\n";
 
 int main( int argc, char **argv )
 {

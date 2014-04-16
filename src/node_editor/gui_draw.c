@@ -218,7 +218,7 @@ void draw_widget( struct Widget *w, void *screen )
 		int rail_len = w->size_x - UI_SLIDER_BUTTON_LEN;
 		int rail_mid_y2 = ( y + UI_SLIDER_RAIL_POS_Y ) << 1;
 		int rail_n = ( rail_mid_y2 - UI_SLIDER_RAIL_TH ) >> 1;
-		int rail_w = ((((((w)->bounds).x0)<<(1))+(UI_SLIDER_BUTTON_LEN))>>(1)); /* gcc suggested adding parantheses */
+		int rail_w = ( w->bounds.x0 << 1 ) + UI_SLIDER_BUTTON_LEN >> 1;
 		
 		int but_n = ( rail_mid_y2 - UI_SLIDER_BUTTON_TH ) >> 1;
 		int but_w = w->bounds.x0 + rail_len * w->slider->pos;
