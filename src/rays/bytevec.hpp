@@ -1,27 +1,27 @@
 #include <emmintrin.h>
 
 enum {
-	BYTEVEC_LEN = 16
+	BYTE_VEC_LEN = 16
 };
 
-struct ByteVec
+/* Byte vector */
+struct Bytev
 {
 	__m128i x;
 	
-	ByteVec operator ++ ( ByteVec y ) { return _mm_adds_epu8( x, y.x ); } /* saturating add */
-	ByteVec operator + ( ByteVec y ) { return _mm_add_epi8( x, y.x ); }
-	ByteVec operator - ( ByteVec y ) { return _mm_sub_epi8( x, y.x ); }
-	ByteVec operator & ( ByteVec y ) { return _mm_and_si128( x, y.x ); }
-	ByteVec operator | ( ByteVec y ) { return _mm_or_si128( x, y.x ); }
-	ByteVec operator ^ ( ByteVec y ) { return _mm_xor_si128( x, y.x ); }
+	Bytev operator + ( Bytev y ) { return _mm_adds_epu8( x, y.x ); } /* saturating add */
+	Bytev operator - ( Bytev y ) { return _mm_subs_epu8( x, y.x ); } /* saturating sub */
+	Bytev operator & ( Bytev y ) { return _mm_and_si128( x, y.x ); }
+	Bytev operator | ( Bytev y ) { return _mm_or_si128( x, y.x ); }
+	Bytev operator ^ ( Bytev y ) { return _mm_xor_si128( x, y.x ); }
 	
 	/* Comparisons. These return 0xFF or 0 */
-	ByteVec operator == ( ByteVec y ) { return _mm_cmpeq_epi8( x, y.x ); }
-	ByteVec operator > ( ByteVec y ) { return _mm_cmpgt_epi8( x, y.x ); }
-	ByteVec operator < ( ByteVec y ) { return _mm_cmpgt_epi8( y.x, x ); }
+	Bytev operator == ( Bytev y ) { return _mm_cmpeq_epi8( x, y.x ); }
+	Bytev operator > ( Bytev y ) { return _mm_cmpgt_epi8( x, y.x ); }
+	Bytev operator < ( Bytev y ) { return _mm_cmpgt_epi8( y.x, x ); }
 	
 	/*  Computes a * b >> 8 */
-	ByteVec operator * ( ByteVec y )
+	Bytev operator * ( Bytev y )
 	{
 		__m128i a0, b0, a1, b1, c0, c1;
 		a1 = _mm_srli_epi16( x, 8 );
@@ -35,3 +35,39 @@ struct ByteVec
 		return _mm_unpacklo_epi8( c0, c1 );
 	}
 };
+
+static Bytev set1( int x ) { Bytev b; b.x = _mm_set1_epi8( x ); return b; }
+static Bytev min( Bytev a, Bytev b ) { Bytev c; c.x = _mm_min_epu8( a.x, b.x ); return c; }
+static Bytev max( Bytev a, Bytev b ) { Bytev c; c.x = _mm_max_epu8( a.x, b.x ); return c; }
+
+/* Returns bits from a where bits in test are 1 */
+static Bytev choose( Bytev a, Bytev b, Bytev test )
+{
+	Bytev c;
+	c.x = _mm_or_si128( _mm_and_si128( a, test ), _mm_andnot_si128( test, b ) );
+	return c;
+}
+
+/* Returns 0xFF if x,y,z inside sphere */
+Bytev sphere( Bytev x, Bytev y, Bytev z, int x0, int y0, int z0, int r )
+{
+	x = x - set1( x0 );
+	y = y - set1( y0 );
+	z = z - set1( z0 );
+	return ( x*x + y*y + z*z ) < set1( r );
+}
+
+/* Returns 0xFF if x,y,z inside box */
+Bytev box( Bytev x, Bytev y, Bytev z, int x0, int y0, int z0, int x1, int y1, int z1 )
+{
+	return x > set1( x0 ) & x < set1( x1 )
+	& y > set1( y0 ) & y < set1( y1 )
+	& z > set1( z0 ) & z < set1( z1 );
+}
+
+/* Can be used to produce chessboard-like pattern when maski has a high bit set */
+Bytev checkers( Bytev x, Bytev y, Bytev z, int mask )
+{
+	Bytev m = set1( maski );
+	return x & m ^ y & m ^ z & m;
+}
