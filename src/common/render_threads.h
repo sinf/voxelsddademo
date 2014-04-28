@@ -2,6 +2,9 @@
 #define _RENDER_THREADS_H
 #include "types.h"
 
+struct Camera;
+struct Octree;
+
 typedef struct {
 	uint64 frame_time; /* microseconds */
 	uint64 rays_per_frame;
@@ -18,7 +21,7 @@ void start_render_threads( int N );
 /* Does nothing if no threads are running. Stalls until all threads are dead */
 void stop_render_threads( void );
 
-void begin_volume_rendering( void ); /* signals the worker threads to begin rendering a frame */
+void begin_volume_rendering( const struct Camera *camera, struct Octree *volume ); /* signals the worker threads to begin rendering a frame */
 void end_volume_rendering( RayPerfInfo info[1] ); /* waits and returns only when the entire frame has been rendered. if info!=NULL then performance data is written there */
 
 #endif

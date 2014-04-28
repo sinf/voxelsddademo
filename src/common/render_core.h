@@ -13,10 +13,6 @@
 /* #define ENABLE_SPECULAR_TERM 0 */
 #define THE_GAMMA_VALUE 2.0f
 
-/* todo: try to get rid of these globals */
-extern Octree *the_volume;
-extern Camera camera;
-
 extern int show_normals;
 extern int show_depth_buffer;
 extern int enable_shadows;
@@ -37,11 +33,11 @@ void set_light_pos( float x, float y, float z );
 void resize_render_output( int w, int h );
 
 /* Computes origin & direction of one primary ray. (x,y) are pixel coordinates */
-void get_primary_ray( Ray *ray, const Camera *c, int x, int y );
+void get_primary_ray( Ray *ray, const Camera *c, const Octree *volume, int x, int y );
 
 /* Used by render_threads.c */
 #define RENDER_THREAD_MEM_PER_PIXEL (6*sizeof(float)) /* <- ray_buffer gets allocated based on this value */
-void render_part( size_t start_row, size_t end_row, float *ray_buffer );
+void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t end_row, float *ray_buffer );
 
 /* Makes render_output_rgba point to the last frame. The next frame will be rendered into another buffer */
 void swap_render_buffers( void );

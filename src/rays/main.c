@@ -48,6 +48,9 @@ static float light_a2 = 0;
 static float light_r = 1;
 static int moving_light = 0;
 
+static Octree *the_volume = NULL;
+static Camera camera;
+
 static void get_light_pos( float p[3] )
 {
 	float x, y, z;
@@ -149,7 +152,7 @@ static void shoot( int win_x, int win_y, int m )
 	x = win_x / (float) screen->w * render_resx;
 	y = win_y / (float) screen->h * render_resy;
 	
-	get_primary_ray( &ray, &camera, x, y );
+	get_primary_ray( &ray, &camera, the_volume, x, y );
 	oc_traverse( the_volume, &mat, &depth, ray.o[0], ray.o[1], ray.o[2], ray.d[0], ray.d[1], ray.d[2] );
 	
 	if ( mat != 0 )
@@ -731,7 +734,7 @@ int main( int argc, char **argv )
 		}
 		process_input( screen->w >> 1, screen->h >> 1 );
 		
-		begin_volume_rendering(); /* start worker threads */
+		begin_volume_rendering( &camera, the_volume ); /* start worker threads */
 		
 		/* Put the previous frame on screen */
 		SDL_LockSurface( screen );

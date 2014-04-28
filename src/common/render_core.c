@@ -11,8 +11,10 @@
 #include "render_threads.h"
 #include "mm_math.c"
 
+/*
 Octree *the_volume = NULL;
 Camera camera;
+*/
 
 uint32 materials_rgb[NUM_MATERIALS];
 float materials_diff[NUM_MATERIALS][4];
@@ -27,7 +29,6 @@ int enable_dac_method = 0;
 
 static float screen_uv_scale[2];
 static float screen_uv_min[2];
-
 static float light_x[4], light_y[4], light_z[4];
 
 void set_light_pos( float x, float y, float z )
@@ -37,8 +38,8 @@ void set_light_pos( float x, float y, float z )
 	_mm_store_ps( light_z, _mm_set1_ps(z) );
 }
 
-static float calc_raydir_z( void ) {
-	return fabs( screen_uv_min[0] ) / tanf( camera.fovx * 0.5f );
+static float calc_raydir_z( const Camera *camera ) {
+	return fabs( screen_uv_min[0] ) / tanf( camera->fovx * 0.5f );
 }
 
 void resize_render_output( int w, int h )
@@ -61,16 +62,16 @@ void resize_render_output( int w, int h )
 	}
 }
 
-void get_primary_ray( Ray *ray, const Camera *c, int x, int y )
+void get_primary_ray( Ray *ray, const Camera *c, const Octree *volume, int x, int y )
 {
 	int n;
 	
 	for( n=0; n<3; n++ )
-		ray->o[n] = c->pos[n] * the_volume->size;
+		ray->o[n] = c->pos[n] * volume->size;
 	
 	ray->d[0] = screen_uv_min[0] + x * screen_uv_scale[0];
 	ray->d[1] = screen_uv_min[1] + y * screen_uv_scale[1];
-	ray->d[2] = calc_raydir_z();
+	ray->d[2] = calc_raydir_z( c );
 	
 	normalize( ray->d );	
 	multiply_vec_mat3f( ray->d, c->eye_to_world, ray->d );
@@ -164,13 +165,11 @@ __m128 tlx, __m128 tly, __m128 tlz /* vector to light */
 }
 
 
-/* Generates 4 random values in range [-1,1)
-gcc can vectorize no problem
+/* Generates 4 random floats in range [-1,1). gcc can vectorize no problem when optimization is enabled
 static uint32 state[4] = {0x09F91102,0x9D74E35B,0xD84156C5,0x635688C0};
 */
 static __m128 randf( uint32 s[4] )
 {
-	__m128 f;
 	uint32 x[4];
 	int i;
 	for( i=0; i<4; i++ ) {
@@ -181,9 +180,7 @@ static __m128 randf( uint32 s[4] )
 		x[i] >>= 9;
 		x[i] |= 0x40000000;
 	}
-	f = _mm_load_ps( (float*) x );
-	f = _mm_sub_ps( f, _mm_set1_ps(3) );
-	return f;
+	return _mm_sub_ps( _mm_load_ps( (float*) x ), _mm_set1_ps(3) );
 }
 
 /*
@@ -335,7 +332,9 @@ static void generate_primary_rays(
 	size_t start_row,
 	size_t end_row,
 	float *ray_ox, float *ray_oy, float *ray_oz,
-	float *ray_dx, float *ray_dy, float *ray_dz )
+	float *ray_dx, float *ray_dy, float *ray_dz,
+	const Camera *camera,
+	float camera_pos_scale )
 {
 	float u0f, duf;
 	__m128 u0, u, v, w, du, dv;
@@ -343,9 +342,9 @@ static void generate_primary_rays(
 	size_t r, y, x;
 	__m128 ox, oy, oz;
 	
-	ox = _mm_set1_ps( camera.pos[0] * the_volume->size );
-	oy = _mm_set1_ps( camera.pos[1] * the_volume->size );
-	oz = _mm_set1_ps( camera.pos[2] * the_volume->size );
+	ox = _mm_set1_ps( camera->pos[0] * camera_pos_scale );
+	oy = _mm_set1_ps( camera->pos[1] * camera_pos_scale );
+	oz = _mm_set1_ps( camera->pos[2] * camera_pos_scale );
 	
 	u0f = screen_uv_min[0];
 	duf = screen_uv_scale[0];
@@ -353,17 +352,17 @@ static void generate_primary_rays(
 	du = _mm_set1_ps( duf*4 );
 	v = _mm_set1_ps( screen_uv_min[1] + start_row * screen_uv_scale[1] );
 	dv = _mm_set1_ps( screen_uv_scale[1] );
-	w = _mm_set1_ps( calc_raydir_z() );
+	w = _mm_set1_ps( calc_raydir_z( camera ) );
 	
-	m0 = _mm_set1_ps( camera.eye_to_world[0] );
-	m1 = _mm_set1_ps( camera.eye_to_world[1] );
-	m2 = _mm_set1_ps( camera.eye_to_world[2] );
-	m3 = _mm_set1_ps( camera.eye_to_world[3] );
-	m4 = _mm_set1_ps( camera.eye_to_world[4] );
-	m5 = _mm_set1_ps( camera.eye_to_world[5] );
-	m6 = _mm_set1_ps( camera.eye_to_world[6] );
-	m7 = _mm_set1_ps( camera.eye_to_world[7] );
-	m8 = _mm_set1_ps( camera.eye_to_world[8] );
+	m0 = _mm_set1_ps( camera->eye_to_world[0] );
+	m1 = _mm_set1_ps( camera->eye_to_world[1] );
+	m2 = _mm_set1_ps( camera->eye_to_world[2] );
+	m3 = _mm_set1_ps( camera->eye_to_world[3] );
+	m4 = _mm_set1_ps( camera->eye_to_world[4] );
+	m5 = _mm_set1_ps( camera->eye_to_world[5] );
+	m6 = _mm_set1_ps( camera->eye_to_world[6] );
+	m7 = _mm_set1_ps( camera->eye_to_world[7] );
+	m8 = _mm_set1_ps( camera->eye_to_world[8] );
 	
 	for( r=0,y=start_row; y<end_row; y++ )
 	{
@@ -400,7 +399,7 @@ static void generate_primary_rays(
 	}
 }
 
-void render_part( size_t start_row, size_t end_row, float *ray_buffer )
+void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t end_row, float *ray_buffer )
 {
 	const int enable_raycast = ENABLE_RAYCAST;
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
@@ -427,7 +426,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 	mat_p0 = render_output_m + pixel_seek;
 	depth_p0 = render_output_z + pixel_seek;
 	
-	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz );
+	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz, camera, volume->size );
 	
 	if ( enable_raycast ) {
 		/* Trace primary rays */
@@ -436,12 +435,12 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 			const float *o[3], *d[3];
 			o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
 			d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
-			oc_traverse_dac( the_volume, num_rays, o, d, mat_p0, depth_p0 );
+			oc_traverse_dac( volume, num_rays, o, d, mat_p0, depth_p0 );
 		} else {
 			for( r=0; r<num_rays; r++ )
 			{
 				oc_traverse(
-				the_volume, mat_p0+r, depth_p0+r,
+				volume, mat_p0+r, depth_p0+r,
 				ray_ox[r], ray_oy[r], ray_oz[r],
 				ray_dx[r], ray_dy[r], ray_dz[r] );
 			}
@@ -454,7 +453,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		
 		if ( show_depth_buffer )
 		{
-			__m128 conv = _mm_set1_ps( 255.0f / the_volume->size );
+			__m128 conv = _mm_set1_ps( 255.0f / volume->size );
 			__m128 byte = _mm_set1_ps( 255.0f );
 			
 			for( r=0; r<num_rays; r+=4 )
@@ -491,7 +490,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 		lz = _mm_load_ps( light_z );
 		
 		/* Prevents self-occlusion problem with shadows */
-		depth_offset = _mm_set1_ps( 0.001f / 512.0 * ( 1 << the_volume->root_level ) );
+		depth_offset = _mm_set1_ps( 0.001f / 512.0 * ( 1 << volume->root_level ) );
 		
 		/* Generate shadow rays */
 		for( r=0; r<num_rays; r+=4 )
@@ -542,7 +541,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 					
 					o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
 					d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
-					oc_traverse_dac( the_volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
+					oc_traverse_dac( volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
 					
 					for( r=0; r<num_rays; r+=16 )
 						calc_shadow_mat( mat_p0+r, shadow_buf+r, shade_bits );
@@ -566,7 +565,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 								continue; /* the sky doesn't receive shadows */
 							
 							oc_traverse(
-							the_volume, shadow_m+s, &z,
+							volume, shadow_m+s, &z,
 							ray_ox[k], ray_oy[k], ray_oz[k],
 							ray_dx[k], ray_dy[k], ray_dz[k] );
 						}
@@ -593,7 +592,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 				__m128 nx, ny, nz;
 				int s, rr;
 				int o[4];
-				__m128i p, u;
+				__m128i /*p, */u;
 				
 				if ( *(uint32*)(mat_p0+r) == 0 )
 					continue;
@@ -637,7 +636,7 @@ void render_part( size_t start_row, size_t end_row, float *ray_buffer )
 						uint8 m;
 						
 						oc_traverse(
-						the_volume, &m, &z,
+						volume, &m, &z,
 						ray_ox[r+rr], ray_oy[r+rr], ray_oz[r+rr],
 						dx[s], dy[s], dz[s] );
 						
