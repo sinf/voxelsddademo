@@ -14,6 +14,7 @@
 #include "city.h"
 
 #include "camera.h"
+#include "render_buffers.h"
 #include "render_core.h"
 #include "render_threads.h"
 #include "text.h"
@@ -153,7 +154,7 @@ static void shoot( int win_x, int win_y, int m )
 	y = win_y / (float) screen->h * render_resy;
 	
 	get_primary_ray( &ray, &camera, the_volume, x, y );
-	oc_traverse( the_volume, &mat, &depth, ray.o[0], ray.o[1], ray.o[2], ray.d[0], ray.d[1], ray.d[2] );
+	depth = oc_traverse( the_volume, &mat, ray.o[0], ray.o[1], ray.o[2], ray.d[0], ray.d[1], ray.d[2], NAN );
 	
 	if ( mat != 0 )
 	{

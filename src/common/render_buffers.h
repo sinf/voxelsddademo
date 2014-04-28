@@ -11,8 +11,8 @@ extern uint8 *render_output_m; /* materials */
 extern float *render_output_z; /* ray depth (distance to first intersection) */
 
 /* Pixel buffers. The pointers are aligned to 16 bytes  */
-extern uint32 *render_output_write; /* Write-mostly. This is the "back buffer" */
-extern uint32 *render_output_rgba; /* Read-only. This is the "front buffer" */
+extern uint32 *render_output_write; /* Write-mostly. This is the "back" buffer */
+extern uint32 *render_output_rgba; /* Read-only. This is the "front" buffer */
 
 /* Interchanges the 2 pointers above */
 void swap_render_buffers( void );

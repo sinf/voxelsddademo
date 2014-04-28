@@ -112,9 +112,8 @@ void get_node_bounds( aabb3f *bounds, const vec3i pos, int size )
 	}
 }
 
-/* Chooses the most frequent (mode) material in children
-Material zero is treated as a second class citizen */
-#if 0
+/* Chooses the most frequent (mode) material in children */
+#if 1
 int get_mode_material( OctreeNode *node )
 {
 	int mat[8];

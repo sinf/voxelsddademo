@@ -439,10 +439,10 @@ void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t
 		} else {
 			for( r=0; r<num_rays; r++ )
 			{
-				oc_traverse(
-				volume, mat_p0+r, depth_p0+r,
+				depth_p0[r] =  oc_traverse(
+				volume, mat_p0+r,
 				ray_ox[r], ray_oy[r], ray_oz[r],
-				ray_dx[r], ray_dy[r], ray_dz[r] );
+				ray_dx[r], ray_dy[r], ray_dz[r], MAX_DEPTH_VALUE );
 			}
 		}
 	}
@@ -558,16 +558,15 @@ void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t
 						
 						for( s=0; s<16; s++ )
 						{
-							float z;
 							int k = r + s;
 							
 							if ( mat_p0[k] == 0 )
 								continue; /* the sky doesn't receive shadows */
 							
 							oc_traverse(
-							volume, shadow_m+s, &z,
+							volume, shadow_m+s,
 							ray_ox[k], ray_oy[k], ray_oz[k],
-							ray_dx[k], ray_dy[k], ray_dz[k] );
+							ray_dx[k], ray_dy[k], ray_dz[k], NAN );
 						}
 						
 						calc_shadow_mat( mat_p0+r, shadow_m, shade_bits );
@@ -584,79 +583,64 @@ void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t
 		if ( enable_aoccl && !show_normals )
 		{
 			/* Trace ambient occlusion */
+			
 			static uint32 state[4] = {0x09F91102,0x9D74E35B,0xD84156C5,0x635688C0};
+			float falloff = AO_FALLOFF * volume->size;
 			uint32 *pixel_p = render_output_write + pixel_seek;
-			for( r=0; r<num_rays; r+=4,pixel_p+=4 )
+			
+			for( r=0; r<num_rays; r++ )
 			{
-				#define AO_SAMP 32
 				__m128 nx, ny, nz;
-				int s, rr;
-				int o[4];
-				__m128i /*p, */u;
+				int s;
+				
+				float dx[NUM_AO_SAMPLES], dy[NUM_AO_SAMPLES], dz[NUM_AO_SAMPLES];
+				float occl, total_z=0;
+				uint32 pix;
+				int ioccl;
 				
 				if ( *(uint32*)(mat_p0+r) == 0 )
 					continue;
 				
-				nx = _mm_load_ps( ray_dx+r );
-				ny = _mm_load_ps( ray_dy+r );
-				ny = _mm_load_ps( ray_dz+r );
+				nx = _mm_set1_ps( ray_dx[r] );
+				ny = _mm_set1_ps( ray_dy[r] );
+				nz = _mm_set1_ps( ray_dz[r] );
 				
-				/*
-				_mm_store_si128( (void*) (pixel_p+r), normal_to_color( _mm_load_ps(dx), _mm_load_ps(dy), _mm_load_ps(dz) ) );
-				continue;
-				*/
-				
-				for( rr=0; rr<4; rr++ ) {
-					float dx[AO_SAMP], dy[AO_SAMP], dz[AO_SAMP];
-					float occl = 0;
+				for( s=0; s<NUM_AO_SAMPLES; s+=4 )
+				{
+					__m128 vx, vy, vz, dot, sign_mask;
 					
-					for( s=0; s<AO_SAMP; s+=4 )
-					{
-						__m128 vx, vy, vz, dot, sign_mask;
-						
-						sign_mask = _mm_castsi128_ps( _mm_set1_epi32( 0x80000000 ) );
-						vx = randf( state );
-						vy = randf( state );
-						vz = randf( state );
-						normalize_vec( &vx, &vy, &vz, vx, vy, vz );
-						dot = dot_prod( vx, vy, vz, nx, ny, nz );
-						dot = _mm_and_ps( dot, sign_mask );
-						vx = _mm_xor_ps( vx, dot );
-						vy = _mm_xor_ps( vy, dot );
-						vz = _mm_xor_ps( vz, dot );
-						_mm_store_ps( dx+s, vx );
-						_mm_store_ps( dy+s, vy );
-						_mm_store_ps( dz+s, vz );
-					}
-					
-					for( s=0; s<AO_SAMP; s++ )
-					{
-						float falloff = 50;
-						float z;
-						uint8 m;
-						
-						oc_traverse(
-						volume, &m, &z,
-						ray_ox[r+rr], ray_oy[r+rr], ray_oz[r+rr],
-						dx[s], dy[s], dz[s] );
-						
-						occl += ( 1.0 - fmin( z, falloff ) / falloff ) * 255.0f / AO_SAMP;
-					}
-					
-					o[rr] = occl;
+					sign_mask = _mm_castsi128_ps( _mm_set1_epi32( 0x80000000 ) );
+					vx = randf( state );
+					vy = randf( state );
+					vz = randf( state );
+					normalize_vec( &vx, &vy, &vz, vx, vy, vz );
+					dot = dot_prod( vx, vy, vz, nx, ny, nz );
+					dot = _mm_and_ps( dot, sign_mask );
+					vx = _mm_xor_ps( vx, dot );
+					vy = _mm_xor_ps( vy, dot );
+					vz = _mm_xor_ps( vz, dot );
+					_mm_store_ps( dx+s, vx );
+					_mm_store_ps( dy+s, vy );
+					_mm_store_ps( dz+s, vz );
 				}
 				
-				u = _mm_load_si128( (void*) o );
-				u = _mm_or_si128( u, _mm_slli_epi32( u, 8 ) );
-				u = _mm_or_si128( u, _mm_slli_epi32( u, 16 ) );
+				for( s=0; s<NUM_AO_SAMPLES; s++ )
+				{
+					uint8 m;
+					
+					total_z += oc_traverse(
+						volume, &m,
+						ray_ox[r], ray_oy[r], ray_oz[r],
+						dx[s], dy[s], dz[s], falloff );
+				}
 				
-				#if 1
-				_mm_store_si128( (void*) pixel_p, u );
-				#else
-				p = _mm_load_si128( (void*) pixel_p );
-				p = _mm_subs_epu8( p, u );
-				_mm_store_si128( (void*) pixel_p, p );
-				#endif
+				occl = total_z / ( NUM_AO_SAMPLES * falloff );
+				ioccl = occl * 255.0f;
+				
+				pix = ioccl;
+				pix |= ( pix << 8 );
+				pix |= ( pix << 16 );
+				pixel_p[r] = pix;
 			}
 		}
 	}
