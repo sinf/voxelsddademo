@@ -29,6 +29,8 @@ static volatile enum {
 #define INITIAL_FRAME_ID 0
 typedef uint64 FrameID;
 volatile FrameID current_frame_id = INITIAL_FRAME_ID;
+static const struct Camera *the_camera = NULL;
+static struct Octree *the_volume = NULL;
 /* *********************************************** */
 
 static Mutex finished_parts_mutex = MUTEX_INITIALIZER;
@@ -56,12 +58,16 @@ static void *render_thread_func( void *p )
 	{
 		FrameID my_current_frame_id;
 		int my_render_state;
+		const Camera *my_cam;
+		Octree *my_vol;
 		
 		mutex_lock( &render_state_mutex );
 		{
 			/* Get local copies of the global variables */
 			my_render_state = render_state;
 			my_current_frame_id = current_frame_id;
+			my_cam = the_camera;
+			my_vol = the_volume;
 		}
 		mutex_unlock( &render_state_mutex );
 		
@@ -73,7 +79,7 @@ static void *render_thread_func( void *p )
 				if ( my_old_frame_id != my_current_frame_id )
 				{
 					/* Do some heavy number crunching, recursion and memory I/O */
-					render_part( start_row, end_row, ray_buffer );
+					render_part( my_cam, my_vol, start_row, end_row, ray_buffer );
 					
 					/* Job finished - notify main thread */
 					mutex_lock( &finished_parts_mutex );
@@ -159,7 +165,7 @@ void start_render_threads( int count )
 }
 
 static uint64 frame_start_time = 0;
-void begin_volume_rendering( void )
+void begin_volume_rendering( const struct Camera *camera, struct Octree *volume )
 {
 	/* No threads, can't render */
 	if ( num_render_threads <= 0 )
@@ -167,6 +173,8 @@ void begin_volume_rendering( void )
 	
 	mutex_lock( &finished_parts_mutex );
 	current_frame_id++;
+	the_camera = camera;
+	the_volume = volume;
 	finished_parts = 0;
 	
 	frame_start_time = get_microsec();
