@@ -6,18 +6,13 @@
 #include <string.h>
 #include <unistd.h>
 #include "oc_traverse2.h"
+#include "render_buffers.h"
 #include "render_core.h"
 #include "render_threads.h"
 #include "mm_math.c"
 
 Octree *the_volume = NULL;
 Camera camera;
-
-static uint8 *render_output_m = NULL; /* materials */
-static float *render_output_z = NULL; /* ray depth (distance to first intersection) */
-
-static uint32 *render_output_write = NULL;
-uint32 *render_output_rgba = NULL;
 
 uint32 materials_rgb[NUM_MATERIALS];
 float materials_diff[NUM_MATERIALS][4];
@@ -33,9 +28,6 @@ int enable_dac_method = 0;
 static float screen_uv_scale[2];
 static float screen_uv_min[2];
 
-size_t render_resx=0, render_resy=0;
-static size_t total_pixels = 0;
-
 static float light_x[4], light_y[4], light_z[4];
 
 void set_light_pos( float x, float y, float z )
@@ -45,52 +37,28 @@ void set_light_pos( float x, float y, float z )
 	_mm_store_ps( light_z, _mm_set1_ps(z) );
 }
 
-void swap_render_buffers( void )
-{
-	void *p = render_output_rgba;
-	render_output_rgba = render_output_write;
-	render_output_write = p;
-}
-
 static float calc_raydir_z( void ) {
 	return fabs( screen_uv_min[0] ) / tanf( camera.fovx * 0.5f );
 }
 
 void resize_render_output( int w, int h )
 {
-	double screen_ratio;
 	const int nt = num_render_threads;
-	/* int k; */
-	size_t alloc_pixels;
-	
 	stop_render_threads();
+	w &= ~0xF;
 	
-	render_resx = w & ~0xF; /* width needs to be a multiple of 16 */
-	render_resy = h;
-	total_pixels = render_resx * render_resy;
-	
-	if ( render_output_m ) free( render_output_m );
-	if ( render_output_z ) free( render_output_z );
-	
-	if ( !total_pixels ) {
-		render_output_m = NULL;
-		render_output_z = NULL;
-		return;
+	if ( resize_render_buffers( w, h ) )
+	{
+		double screen_ratio;
+		
+		screen_ratio = w / (double) h;
+		screen_uv_min[0] = -0.5;
+		screen_uv_scale[0] = 1.0 / w;
+		screen_uv_min[1] = 0.5 / screen_ratio;
+		screen_uv_scale[1] = -1.0 / h / screen_ratio;
+		
+		start_render_threads( nt );
 	}
-	
-	screen_ratio = render_resx / (double) render_resy;
-	screen_uv_min[0] = -0.5;
-	screen_uv_scale[0] = 1.0 / render_resx;
-	screen_uv_min[1] = 0.5 / screen_ratio;
-	screen_uv_scale[1] = -1.0 / render_resy / screen_ratio;
-	
-	alloc_pixels = total_pixels + render_resx + 16; /* Allocate some extra pixels */
-	render_output_m = aligned_alloc( 16, alloc_pixels * sizeof render_output_m[0] );
-	render_output_z = aligned_alloc( 16, alloc_pixels * sizeof render_output_z[0] );
-	render_output_write = aligned_alloc( 16, alloc_pixels * sizeof( uint32 ) );
-	render_output_rgba = aligned_alloc( 16, alloc_pixels * sizeof( uint32 ) );
-	
-	start_render_threads( nt );
 }
 
 void get_primary_ray( Ray *ray, const Camera *c, int x, int y )
