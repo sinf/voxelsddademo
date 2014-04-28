@@ -6,12 +6,10 @@
 #include "voxels.h"
 #include "materials.h"
 
-#define MAX_DEPTH_VALUE 100000
+#define NUM_AO_SAMPLES 32
+#define AO_FALLOFF 0.35f /* fraction of total volume size */
 
-#define NUM_AO_SAMPLES 20
-#define AO_FALLOFF 0.2f
-
-#define ENABLE_RAYCAST 1
+#define ENABLE_RAYCAST 1 /* Set to zero to disable actual graphics. Useful for profiling/optimizing higher level loops & threads */
 #define ENABLE_GAMMA_CORRECTION 1 /* enables/disables 3 sqrts per pixel */
 /* #define ENABLE_SPECULAR_TERM 0 */
 #define THE_GAMMA_VALUE 2.0f
@@ -44,5 +42,14 @@ void swap_render_buffers( void );
 
 /* Ray traversal function. see oc_traverse.c. For infinitely long rays, pass NAN as max_ray_depth. Returns ray depth (or max_ray_depth) */
 float oc_traverse( const Octree *oc, uint8 *output_mat, float ox, float oy, float oz, float dx, float dy, float dz, float max_ray_depth );
+
+/* Divide-And-Conquer version. Didn't turn out to be fast at all.
+see oc_traverse2.c */
+void oc_traverse_dac( const Octree oc[1],
+	size_t ray_count,
+	float const *ray_o[3],
+	float const *ray_d[3],
+	uint8 out_mat[],
+	float out_depth[] );
 
 #endif

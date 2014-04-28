@@ -5,16 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include "oc_traverse2.h"
 #include "render_buffers.h"
 #include "render_core.h"
 #include "render_threads.h"
 #include "mm_math.c"
-
-/*
-Octree *the_volume = NULL;
-Camera camera;
-*/
 
 uint32 materials_rgb[NUM_MATERIALS];
 float materials_diff[NUM_MATERIALS][4];
@@ -131,6 +125,7 @@ __m128 tlx, __m128 tly, __m128 tlz /* vector to light */
 	
 	d = _mm_max_ps( _mm_setzero_ps(), d ); /* clamp dot product */
 	d = _mm_mul_ps( d, ldif );
+	d = _mm_and_ps( _mm_cmpeq_ps( d, d ), d ); /* convert NaNs to zeros to avoid sky being white (since rays don't hit anything there) */
 	d = _mm_add_ps( d, lamb ); /* ambient term */
 	
 	/* accumulate bytes into this register */
@@ -183,6 +178,59 @@ static __m128 randf( uint32 s[4] )
 	return _mm_sub_ps( _mm_load_ps( (float*) x ), _mm_set1_ps(3) );
 }
 
+/* if ( enable_aoccl && !show_normals )
+if ( *(uint32*)(mat_p0+r) == 0 )
+	continue;
+Returns a float in range [0,1]
+*/
+static float get_ao_samples( Octree *volume, float ox, float oy, float oz, float nx1, float ny1, float nz1, float falloff )
+{
+	static uint32 state[4] = {0x09F91102,0x9D74E35B,0xD84156C5,0x635688C0};
+	float dx[NUM_AO_SAMPLES], dy[NUM_AO_SAMPLES], dz[NUM_AO_SAMPLES];
+	float total_z=0;
+	int s;
+	__m128
+	nx = _mm_set1_ps( nx1 ),
+	ny = _mm_set1_ps( ny1 ),
+	nz = _mm_set1_ps( nz1 );
+	
+	for( s=0; s<NUM_AO_SAMPLES; s+=4 )
+	{
+		__m128 vx, vy, vz, dot, sign_mask;
+		
+		sign_mask = _mm_castsi128_ps( _mm_set1_epi32( 0x80000000 ) );
+		vx = randf( state );
+		vy = randf( state );
+		vz = randf( state );
+		normalize_vec( &vx, &vy, &vz, vx, vy, vz );
+		dot = dot_prod( vx, vy, vz, nx, ny, nz );
+		dot = _mm_and_ps( dot, sign_mask );
+		vx = _mm_xor_ps( vx, dot );
+		vy = _mm_xor_ps( vy, dot );
+		vz = _mm_xor_ps( vz, dot );
+		_mm_store_ps( dx+s, vx );
+		_mm_store_ps( dy+s, vy );
+		_mm_store_ps( dz+s, vz );
+	}
+	for( s=0; s<NUM_AO_SAMPLES; s++ )
+	{
+		uint8 m;
+		float z;
+		float k = 0.01f;
+		
+		z = oc_traverse(
+			volume, &m,
+			ox + k*dx[s],
+			oy + k*dy[s],
+			oz + k*dz[s],
+			dx[s], dy[s], dz[s], falloff );
+		
+		total_z += z;
+	}
+	
+	return total_z / ( NUM_AO_SAMPLES * falloff );
+}
+
 /*
 Inputs:
 	wox_p, woy_p, woz_p    Ray origin
@@ -197,10 +245,11 @@ Note:
 static void shade_pixels( size_t first_row, size_t end_row,
 	float *tlx_p, float *tly_p, float *tlz_p, /* vectors to light */
 	float *wox_p, float *woy_p, float *woz_p, /* world space coords */
-	uint8 const *mat_p, uint32 *pixel_p )
+	uint8 const *mat_p, uint32 *pixel_p, Octree *volume )
 {
 	size_t second_last_row = end_row - 1;
 	size_t y, x;
+	const float ao_falloff = AO_FALLOFF * volume->size;
 	
 	for( y=first_row; y<second_last_row; y++ )
 	{
@@ -210,7 +259,7 @@ static void shade_pixels( size_t first_row, size_t end_row,
 		*/
 		__m128 lwx_suf, lwy_suf, lwz_suf;
 		
-		PROCESS_SCANLINE:
+	PROCESS_SCANLINE:
 		for( x=0; x<render_resx; x+=4 )
 		{
 			uint32 mats;
@@ -274,24 +323,31 @@ static void shade_pixels( size_t first_row, size_t end_row,
 				{
 					__m128 tlx, tly, tlz, ldif, lamb;
 					
+					/* Global ambient light */
+					lamb = _mm_set1_ps( 0.25f );
+					
+					if ( enable_aoccl && ENABLE_RAYCAST ) {
+						float ao[4];
+						float fnx[4], fny[4], fnz[4];
+						int u;
+						
+						_mm_store_ps( fnx, nx );
+						_mm_store_ps( fny, ny );
+						_mm_store_ps( fnz, nz );
+						
+						for( u=0; u<4; u++ )
+							ao[u] = get_ao_samples( volume, wox_p[u], woy_p[u], woz_p[u], fnx[u], fny[u], fnz[u], ao_falloff );
+						
+						lamb = _mm_mul_ps( _mm_load_ps( ao ), lamb );
+					}
+					
 					/* Vector to light */
 					tlx = _mm_load_ps( tlx_p );
 					tly = _mm_load_ps( tly_p );
 					tlz = _mm_load_ps( tlz_p );
 					
 					/* Light diffuse intensity = 1.0 */
-					ldif = _mm_mul_ps( tlx, _mm_rcp_ps(tlx) );
-					
-					/* Global ambient light = 0.25 */
-					lamb = _mm_add_ps( _mm_add_ps( tlx, tlx ), _mm_add_ps( tlx, tlx ) );
-					lamb = _mm_mul_ps( tlx, _mm_rcp_ps(lamb) );
-					
-					if ( enable_aoccl ) {
-						/* Save normal vector for later use */
-						_mm_store_ps( tlx_p, nx );
-						_mm_store_ps( tly_p, ny );
-						_mm_store_ps( tlz_p, nz );
-					}
+					ldif = _mm_set1_ps( 1.0f );
 					
 					rgb = calculate_phong( ldif, lamb,
 					mat_p[0], mat_p[1], mat_p[2], mat_p[3],
@@ -372,9 +428,6 @@ static void generate_primary_rays(
 			__m128 dx, dy, dz,
 			wdx, wdy, wdz;
 			
-			/* For a horizontal field of view of 65 degrees the average unnormalized ray length is 0.143738
-			This information could be used to make vector normalization faster */
-			
 			/* Eye space direction */
 			dx = u;
 			dy = v;
@@ -401,7 +454,6 @@ static void generate_primary_rays(
 
 void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t end_row, float *ray_buffer )
 {
-	const int enable_raycast = ENABLE_RAYCAST;
 	float *ray_ox, *ray_oy, *ray_oz, *ray_dx, *ray_dy, *ray_dz;
 	
 	size_t r;
@@ -428,7 +480,7 @@ void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t
 	
 	generate_primary_rays( resx, start_row, end_row, ray_ox, ray_oy, ray_oz, ray_dx, ray_dy, ray_dz, camera, volume->size );
 	
-	if ( enable_raycast ) {
+	if ( ENABLE_RAYCAST ) {
 		/* Trace primary rays */
 		if ( enable_dac_method )
 		{
@@ -442,7 +494,7 @@ void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t
 				depth_p0[r] =  oc_traverse(
 				volume, mat_p0+r,
 				ray_ox[r], ray_oy[r], ray_oz[r],
-				ray_dx[r], ray_dy[r], ray_dz[r], MAX_DEPTH_VALUE );
+				ray_dx[r], ray_dy[r], ray_dz[r], INFINITY );
 			}
 		}
 	}
@@ -525,52 +577,50 @@ void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t
 			dz = _mm_sub_ps( lz, wz );
 			normalize_vec( ray_dx+r, ray_dy+r, ray_dz+r, dx, dy, dz );
 		}
-	
-		if ( enable_shadows )
+		
+		if ( enable_shadows && ENABLE_RAYCAST )
 		{
 			static const uint32 stored_shade_bits[] = {0x20202020, 0x20202020, 0x20202020, 0x20202020};
 			__m128i shade_bits;
 			
 			shade_bits = _mm_load_si128( (void*) stored_shade_bits );
 			
-			if ( enable_raycast ) {
-				if ( enable_dac_method )
+			if ( enable_dac_method )
+			{
+				const float *o[3], *d[3];
+				__m128i *shadow_buf = aligned_alloc( 16, num_rays );
+				
+				o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
+				d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
+				oc_traverse_dac( volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
+				
+				for( r=0; r<num_rays; r+=16 )
+					calc_shadow_mat( mat_p0+r, shadow_buf+r, shade_bits );
+				
+				free( shadow_buf );
+			}
+			else
+			{
+				/* Trace shadows */
+				for( r=0; r<num_rays; r+=16 )
 				{
-					const float *o[3], *d[3];
-					__m128i *shadow_buf = aligned_alloc( 16, num_rays );
+					uint8 shadow_m[16] = {0};
+					int s;
 					
-					o[0]=ray_ox; o[1]=ray_oy; o[2]=ray_oz;
-					d[0]=ray_dx; d[1]=ray_dy; d[2]=ray_dz;
-					oc_traverse_dac( volume, num_rays, o, d, (uint8*) shadow_buf, (float*) depth_p0 );
-					
-					for( r=0; r<num_rays; r+=16 )
-						calc_shadow_mat( mat_p0+r, shadow_buf+r, shade_bits );
-					
-					free( shadow_buf );
-				}
-				else
-				{
-					/* Trace shadows */
-					for( r=0; r<num_rays; r+=16 )
+					for( s=0; s<16; s++ )
 					{
-						uint8 shadow_m[16] = {0};
-						int s;
+						int k = r + s;
 						
-						for( s=0; s<16; s++ )
-						{
-							int k = r + s;
-							
-							if ( mat_p0[k] == 0 )
-								continue; /* the sky doesn't receive shadows */
-							
-							oc_traverse(
-							volume, shadow_m+s,
-							ray_ox[k], ray_oy[k], ray_oz[k],
-							ray_dx[k], ray_dy[k], ray_dz[k], NAN );
-						}
+						if ( mat_p0[k] == 0 )
+							continue; /* the sky doesn't receive shadows */
 						
-						calc_shadow_mat( mat_p0+r, shadow_m, shade_bits );
+						oc_traverse(
+						volume, shadow_m+s,
+						ray_ox[k], ray_oy[k], ray_oz[k],
+						ray_dx[k], ray_dy[k], ray_dz[k], NAN );
 					}
+					
+					calc_shadow_mat( mat_p0+r, shadow_m, shade_bits );
 				}
 			}
 		}
@@ -578,70 +628,6 @@ void render_part( const Camera *camera, Octree *volume, size_t start_row, size_t
 		shade_pixels( start_row, end_row,
 		ray_dx, ray_dy, ray_dz, /* vectors to light */
 		ray_ox, ray_oy, ray_oz, /* world space coords */
-		mat_p0, render_output_write+pixel_seek );
-		
-		if ( enable_aoccl && !show_normals )
-		{
-			/* Trace ambient occlusion */
-			
-			static uint32 state[4] = {0x09F91102,0x9D74E35B,0xD84156C5,0x635688C0};
-			float falloff = AO_FALLOFF * volume->size;
-			uint32 *pixel_p = render_output_write + pixel_seek;
-			
-			for( r=0; r<num_rays; r++ )
-			{
-				__m128 nx, ny, nz;
-				int s;
-				
-				float dx[NUM_AO_SAMPLES], dy[NUM_AO_SAMPLES], dz[NUM_AO_SAMPLES];
-				float occl, total_z=0;
-				uint32 pix;
-				int ioccl;
-				
-				if ( *(uint32*)(mat_p0+r) == 0 )
-					continue;
-				
-				nx = _mm_set1_ps( ray_dx[r] );
-				ny = _mm_set1_ps( ray_dy[r] );
-				nz = _mm_set1_ps( ray_dz[r] );
-				
-				for( s=0; s<NUM_AO_SAMPLES; s+=4 )
-				{
-					__m128 vx, vy, vz, dot, sign_mask;
-					
-					sign_mask = _mm_castsi128_ps( _mm_set1_epi32( 0x80000000 ) );
-					vx = randf( state );
-					vy = randf( state );
-					vz = randf( state );
-					normalize_vec( &vx, &vy, &vz, vx, vy, vz );
-					dot = dot_prod( vx, vy, vz, nx, ny, nz );
-					dot = _mm_and_ps( dot, sign_mask );
-					vx = _mm_xor_ps( vx, dot );
-					vy = _mm_xor_ps( vy, dot );
-					vz = _mm_xor_ps( vz, dot );
-					_mm_store_ps( dx+s, vx );
-					_mm_store_ps( dy+s, vy );
-					_mm_store_ps( dz+s, vz );
-				}
-				
-				for( s=0; s<NUM_AO_SAMPLES; s++ )
-				{
-					uint8 m;
-					
-					total_z += oc_traverse(
-						volume, &m,
-						ray_ox[r], ray_oy[r], ray_oz[r],
-						dx[s], dy[s], dz[s], falloff );
-				}
-				
-				occl = total_z / ( NUM_AO_SAMPLES * falloff );
-				ioccl = occl * 255.0f;
-				
-				pix = ioccl;
-				pix |= ( pix << 8 );
-				pix |= ( pix << 16 );
-				pixel_p[r] = pix;
-			}
-		}
+		mat_p0, render_output_write+pixel_seek, volume );
 	}
 }

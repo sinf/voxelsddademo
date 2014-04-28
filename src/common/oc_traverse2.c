@@ -2,7 +2,6 @@
 #include <xmmintrin.h>
 #include <string.h>
 #include "voxels.h"
-#include "oc_traverse2.h"
 #include "render_core.h"
 
 #define OCTREE_DEPTH_HARDLIMIT 15
@@ -168,7 +167,7 @@ void oc_traverse_dac( const Octree oc[1],
 		uint32 iter = 0;
 		
 		out_mat[r] = 0;
-		out_depth[r] = MAX_DEPTH_VALUE;
+		out_depth[r] = NAN;
 		
 		for( k=0; k<3; k++ ) {
 			if ( ray_d[k][r] < 0 ) {
