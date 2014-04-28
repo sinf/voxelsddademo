@@ -11,7 +11,10 @@ int oc_detail_level = 0;
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define MAX(a,b) ((a)>(b)?(a):(b))
 
-static int traversal_func( const OctreeNode *parent, uint8 *out_m, float *out_z, int level, unsigned rec_mask, float tminx, float tminy, float tminz, float tmaxx, float tmaxy, float tmaxz )
+static const float missed = -1.0f;
+
+static float traversal_func( const OctreeNode *parent, uint8 *out_m, float *out_z, int level, unsigned rec_mask,
+float tminx, float tminy, float tminz, float tmaxx, float tmaxy, float tmaxz, float max_ray_depth )
 {
 	float near, far;
 	unsigned n;
@@ -20,10 +23,13 @@ static int traversal_func( const OctreeNode *parent, uint8 *out_m, float *out_z,
 	far = MIN( MIN( tmaxx, tmaxy ), tmaxz );
 	
 	if ( near > far )
-		return 0;
+		return missed;
 	
 	if ( far < 0.0f )
-		return 0;
+		return missed;
+	
+	if ( near > max_ray_depth )
+		return missed;
 	
 	if ( parent->children && level > 0 )
 	{
@@ -39,6 +45,7 @@ static int traversal_func( const OctreeNode *parent, uint8 *out_m, float *out_z,
 		{
 			unsigned k = n ^ rec_mask;
 			float a[3], b[3];
+			float hit_depth;
 			
 			#define get_child_interval(r,split,lo,hi) \
 				if ( n & ( 4 >> r ) ) { \
@@ -53,27 +60,29 @@ static int traversal_func( const OctreeNode *parent, uint8 *out_m, float *out_z,
 			get_child_interval( 1, tsplity, tminy, tmaxy );
 			get_child_interval( 2, tsplitz, tminz, tmaxz );
 			
-			if ( traversal_func( parent->children+k, out_m, out_z, level, rec_mask, a[0], a[1], a[2], b[0], b[1], b[2] ) )
-				return 1;
+			hit_depth = traversal_func( parent->children+k, out_m, out_z, level, rec_mask, a[0], a[1], a[2], b[0], b[1], b[2], max_ray_depth );
+			
+			if ( hit_depth != missed )
+				return hit_depth;
 		}
 	}
 	else if ( parent->mat )
 	{
-		*out_z = near;
 		*out_m = ( ALLOW_DEBUG_VISUALS && oc_show_travel_depth ) ? ( level + 2 & MATERIAL_BITMASK ) : parent->mat;
-		return 1;
+		return near;
 	}
 	
-	return 0;
+	return missed;
 }
 
-void oc_traverse( const Octree *oc, uint8 *out_m, float *out_z, float ray_ox, float ray_oy, float ray_oz, float ray_dx, float ray_dy, float ray_dz )
+float oc_traverse( const Octree *oc, uint8 *out_m, float ray_ox, float ray_oy, float ray_oz, float ray_dx, float ray_dy, float ray_dz, float max_ray_depth )
 {
-	int initial_level = oc->root_level; /* oc->root_level - max_recursion_level */
+	int initial_level = oc->root_level - oc_detail_level;
 	float size = oc->size;
 	float tmin[3], tmax[3];
 	unsigned mask = 0;
 	float t0, t1, invd;
+	float out_z;
 	
 	/* The same thing:
 	mask |= ( 4 & (*(unsigned*)&d) >> 29 ) >> n;
@@ -96,7 +105,6 @@ void oc_traverse( const Octree *oc, uint8 *out_m, float *out_z, float ray_ox, fl
 	compute_interval( 2, ray_oz, ray_dz );
 	
 	*out_m = 0;
-	*out_z = MAX_DEPTH_VALUE;
-	
-	traversal_func( &oc->root, out_m, out_z, initial_level, mask, tmin[0], tmin[1], tmin[2], tmax[0], tmax[1], tmax[2] );
+	out_z = traversal_func( &oc->root, out_m, &out_z, initial_level, mask, tmin[0], tmin[1], tmin[2], tmax[0], tmax[1], tmax[2], max_ray_depth );
+	return out_z == missed ? max_ray_depth : out_z;
 }
