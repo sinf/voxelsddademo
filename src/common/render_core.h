@@ -6,7 +6,7 @@
 #include "voxels.h"
 #include "materials.h"
 
-#define NUM_AO_SAMPLES 32
+#define NUM_AO_SAMPLES 32 /* must be a multiple of 4 */
 #define AO_FALLOFF 0.35f /* fraction of total volume size */
 
 #define ENABLE_RAYCAST 1 /* Set to zero to disable actual graphics. Useful for profiling/optimizing higher level loops & threads */
@@ -51,5 +51,8 @@ void oc_traverse_dac( const Octree oc[1],
 	float const *ray_d[3],
 	uint8 out_mat[],
 	float out_depth[] );
+
+
+void project_world_to_screen( float scr[2], const Camera *c, float px, float py, float pz, float res_x, float res_y );
 
 #endif
