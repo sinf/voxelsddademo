@@ -19,6 +19,7 @@
 #include "render_threads.h"
 #include "text.h"
 #include "graph.h"
+#include "rasterizer.h"
 
 #define DEFAULT_RESX 800
 #define DEFAULT_RESY 600
@@ -55,7 +56,7 @@ static Camera camera;
 static void get_light_pos( float p[3] )
 {
 	float x, y, z;
-	float t = 10000;
+	float t = 1000;
 	
 	light_a1 = fmod( light_a1, 2*M_PI );
 	light_a2 = fmod( light_a2, 2*M_PI );
@@ -259,6 +260,96 @@ void process_input( int screen_centre_x, int screen_centre_y )
 	move_camera_local( &camera, motion );
 }
 
+static void expand_matrix( float b[16], const float a[9] )
+{
+	memcpy( b, a, 3 * sizeof *a );
+	memcpy( b+4, a+3, 3 * sizeof *a );
+	memcpy( b+8, a+6, 3 * sizeof *a );
+	b[3] = b[7] = b[11] = b[15] = 0;
+}
+
+static void make_frustum( float m[16], float l, float r, float t, float b, float n, float f )
+{
+	m[0] = 2 * n / ( r - l );
+	m[1] = 0;
+	m[2] = 0;
+	m[3] = 0;
+	
+	m[4] = 0;
+	m[5] = 2 * n / ( t - b );
+	m[6] = 0;
+	m[7] = 0;
+	
+	m[8] = ( r + l ) / ( r - l );
+	m[9] = ( t + b ) / ( t - b );
+	m[10] = -( f + n ) / ( f - n );
+	m[11] = -1;
+	
+	m[12] = 0;
+	m[13] = 0;
+	m[14] = -2 * f * n / ( f - n );
+	m[15] = 0;
+}
+
+static void mult_mat4( float c[16], const float a[16], const float b[16] )
+{
+	int i, j, k;
+	for( i=0; i<4; i++ ) {
+		for( j=0; j<4; j++ ) {
+			float d = 0;
+			for( k=0; k<4; k++ ) {
+				d += a[4*i+k] * b[j+4*k];
+			}
+			c[4*i+j] = d;
+		}
+	}
+}
+
+static void transform_vec( float c[4], const float a[16], const float b[4] )
+{
+	#if 1
+	c[0] = a[0]*b[0] + a[4]*b[1] + a[8]*b[2] + a[12]*b[3];
+	c[1] = a[1]*b[0] + a[5]*b[1] + a[9]*b[2] + a[13]*b[3];
+	c[2] = a[2]*b[0] + a[6]*b[1] + a[10]*b[2] + a[14]*b[3];
+	c[3] = a[3]*b[0] + a[7]*b[1] + a[11]*b[2] + a[15]*b[3];
+	#else
+	c[0] = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+	c[1] = a[4]*b[0] + a[5]*b[1] + a[6]*b[2] + a[7]*b[3];
+	c[2] = a[8]*b[0] + a[9]*b[1] + a[10]*b[2] + a[11]*b[3];
+	c[3] = a[12]*b[0] + a[13]*b[1] + a[14]*b[2] + a[15]*b[3];
+	#endif
+}
+
+void project_world_to_screen( float scr[2], const Camera *c, float px, float py, float pz, float res_x, float res_y )
+{
+	float mv[16];
+	float pr[16];
+	float mvp[16];
+	float v[4], v1[4];
+	
+	expand_matrix( mv, c->world_to_eye );
+	memcpy( mv+12, c->pos, 3 * sizeof *mv );
+	mv[15]=1;
+	
+	make_frustum( pr,
+		-1, 1,
+		-1, 1,
+		0, 10000 );
+	
+	mult_mat4( mvp, pr, mv );
+	
+	v[0] = px;
+	v[1] = py;
+	v[2] = pz;
+	v[3] = 1;
+	
+	transform_vec( v1, mvp, v );
+	
+	scr[0] = v1[0] / v1[3] * res_x + res_x / 2;
+	scr[1] = v1[1] / v1[3] * res_y + res_y / 2;
+}
+
+
 static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 {
 	static Graph graph = {
@@ -341,8 +432,33 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 		, (unsigned)( ( graph2.total / graph2.bounds.w + 500 ) / 1000 ),
 		perf.frame_time ? (int)( 1000000 / perf.frame_time ) : 999 );
 	
-	if ( moving_light )
+	if ( moving_light && 0 )
 	{
+		int p;
+		for( p=0; p<8; p++ )
+		{
+			SDL_Rect r;
+			float e[2];
+			float x, y, z;
+			float s = 1;
+			
+			/* get_light_pos( w ); */
+			
+			x = s * ( p >> 2 );
+			y = s * ( p >> 1 & 1 );
+			z = s * ( p & 1 );
+			
+			project_world_to_screen( e, &camera, x, y, z, surf->w, surf->h );
+			
+			draw_text_f( surf, 300, 300 + GLYPH_H * p, "%f, %f", e[0], e[1] );
+			
+			r.x = (int) e[0] - 2;
+			r.y = (int) e[1] - 2;
+			r.w = 5;
+			r.h = 5;
+			SDL_FillRect( surf, &r, ~0 );
+		}
+		
 		/* TODO:
 		Figure out screen space coordinates of the light
 		Draw text and some indicator arrow/box
@@ -699,7 +815,7 @@ int main( int argc, char **argv )
 							show_depth_buffer = !show_depth_buffer;
 							break;
 						case SDLK_o:
-							enable_aoccl = !enable_aoccl;
+							enable_aoccl = ( enable_aoccl + 1 ) % 3;
 							break;
 						case SDLK_i:
 							enable_dac_method = !enable_dac_method;
@@ -737,6 +853,36 @@ int main( int argc, char **argv )
 		
 		begin_volume_rendering( &camera, the_volume ); /* start worker threads */
 		
+		if ( 0 )
+		{
+			int x, y;
+			float verts[4*2];
+			int v;
+			
+			SDL_GetMouseState( &x, &y );
+			
+			verts[0] = x;
+			verts[1] = y;
+			
+			verts[2] = 100;
+			verts[3] = 100;
+			
+			verts[4] = 300;
+			verts[5] = 300;
+			
+			verts[6] = 500;
+			verts[7] = 100;
+			
+			draw_polygon( 0xFFFFFF, 4, verts );
+			
+			for( v=0; v<4*2; v+=2 )
+				draw_box( 0xFF0000, verts[v]-3, verts[v+1]-3, 6, 6 );
+			
+			/*
+			draw_box( 0xFFFFFF, x-50, y-50, 100, 100 );
+			*/
+		}
+		
 		/* Put the previous frame on screen */
 		SDL_LockSurface( screen );
 		if ( upscale_shift )
@@ -751,6 +897,7 @@ int main( int argc, char **argv )
 		SDL_Flip( screen );
 		
 		end_volume_rendering( &perf ); /* End worker threads */
+		
 		swap_render_buffers();
 	}
 	

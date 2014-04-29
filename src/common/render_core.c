@@ -159,25 +159,6 @@ __m128 tlx, __m128 tly, __m128 tlz /* vector to light */
 	return colors;
 }
 
-
-/* Generates 4 random floats in range [-1,1). gcc can vectorize no problem when optimization is enabled
-static uint32 state[4] = {0x09F91102,0x9D74E35B,0xD84156C5,0x635688C0};
-*/
-static __m128 randf( uint32 s[4] )
-{
-	uint32 x[4];
-	int i;
-	for( i=0; i<4; i++ ) {
-		x[i] = s[i];
-		x[i] *= 1664525;
-		x[i] += 1013904223;
-		s[i] = x[i];
-		x[i] >>= 9;
-		x[i] |= 0x40000000;
-	}
-	return _mm_sub_ps( _mm_load_ps( (float*) x ), _mm_set1_ps(3) );
-}
-
 /* if ( enable_aoccl && !show_normals )
 if ( *(uint32*)(mat_p0+r) == 0 )
 	continue;
@@ -186,7 +167,7 @@ Returns a float in range [0,1]
 static float get_ao_samples( Octree *volume, float ox, float oy, float oz, float nx1, float ny1, float nz1, float falloff )
 {
 	static uint32 state[4] = {0x09F91102,0x9D74E35B,0xD84156C5,0x635688C0};
-	float dx[NUM_AO_SAMPLES], dy[NUM_AO_SAMPLES], dz[NUM_AO_SAMPLES];
+	float dx[NUM_AO_SAMPLES+3&~3], dy[NUM_AO_SAMPLES+3&~3], dz[NUM_AO_SAMPLES+3&~3];
 	float total_z=0;
 	int s;
 	__m128
@@ -199,9 +180,9 @@ static float get_ao_samples( Octree *volume, float ox, float oy, float oz, float
 		__m128 vx, vy, vz, dot, sign_mask;
 		
 		sign_mask = _mm_castsi128_ps( _mm_set1_epi32( 0x80000000 ) );
-		vx = randf( state );
-		vy = randf( state );
-		vz = randf( state );
+		vx = mm_rand( state );
+		vy = mm_rand( state );
+		vz = mm_rand( state );
 		normalize_vec( &vx, &vy, &vz, vx, vy, vz );
 		dot = dot_prod( vx, vy, vz, nx, ny, nz );
 		dot = _mm_and_ps( dot, sign_mask );
@@ -271,6 +252,7 @@ static void shade_pixels( size_t first_row, size_t end_row,
 			vx, vy, vz, /* vector v */
 			nx, ny, nz; /* normal vector */
 			__m128i rgb; /* pixel color */
+			__m128i sky_mask;
 			
 			mats = *(uint32*) mat_p;
 			
@@ -316,8 +298,9 @@ static void shade_pixels( size_t first_row, size_t end_row,
 				
 				/* Compute pixel color */
 				if ( show_normals )
-				{
+				{	
 					rgb = normal_to_color( nx, ny, nz );
+					rgb = _mm_andnot_si128( sky_mask, rgb );
 				}
 				else
 				{
@@ -326,35 +309,55 @@ static void shade_pixels( size_t first_row, size_t end_row,
 					/* Global ambient light */
 					lamb = _mm_set1_ps( 0.25f );
 					
-					if ( enable_aoccl && ENABLE_RAYCAST ) {
-						float ao[4];
-						float fnx[4], fny[4], fnz[4];
-						int u;
-						
-						_mm_store_ps( fnx, nx );
-						_mm_store_ps( fny, ny );
-						_mm_store_ps( fnz, nz );
-						
-						for( u=0; u<4; u++ )
-							ao[u] = get_ao_samples( volume, wox_p[u], woy_p[u], woz_p[u], fnx[u], fny[u], fnz[u], ao_falloff );
-						
-						lamb = _mm_mul_ps( _mm_load_ps( ao ), lamb );
-					}
+					/* Light diffuse intensity */
+					ldif = _mm_set1_ps( 0.65f );
 					
-					/* Vector to light */
-					tlx = _mm_load_ps( tlx_p );
-					tly = _mm_load_ps( tly_p );
-					tlz = _mm_load_ps( tlz_p );
-					
-					/* Light diffuse intensity = 1.0 */
-					ldif = _mm_set1_ps( 1.0f );
-					
-					rgb = calculate_phong( ldif, lamb,
-					mat_p[0], mat_p[1], mat_p[2], mat_p[3],
-					nx, ny, nz,
-					tlx, tly, tlz );
+					do {
+						if ( enable_aoccl && ENABLE_RAYCAST ) {
+							float ao[4];
+							float fnx[4], fny[4], fnz[4];
+							int u;
+							
+							_mm_store_ps( fnx, nx );
+							_mm_store_ps( fny, ny );
+							_mm_store_ps( fnz, nz );
+							
+							for( u=0; u<4; u++ )
+								ao[u] = get_ao_samples( volume, wox_p[u], woy_p[u], woz_p[u], fnx[u], fny[u], fnz[u], ao_falloff );
+							
+							lamb = _mm_load_ps( ao );
+							
+							if ( enable_aoccl == 2 ) {
+								/* show ao as grayscale */
+								rgb = _mm_cvtps_epi32( _mm_mul_ps( lamb, _mm_set1_ps( 255.0f ) ) );
+								rgb = _mm_or_si128( rgb, _mm_slli_epi32( rgb, 8 ) );
+								rgb = _mm_or_si128( rgb, _mm_slli_epi32( rgb, 16 ) );
+								break;
+							}
+							
+							lamb = _mm_mul_ps( lamb, _mm_set1_ps( 0.5f ) );
+							ldif = _mm_set1_ps( 0.4f );
+						}
+						
+						/* Vector to light */
+						tlx = _mm_load_ps( tlx_p );
+						tly = _mm_load_ps( tly_p );
+						tlz = _mm_load_ps( tlz_p );
+						
+						rgb = calculate_phong( ldif, lamb,
+						mat_p[0], mat_p[1], mat_p[2], mat_p[3],
+						nx, ny, nz,
+						tlx, tly, tlz );
+					} while( 0 );
 				}
 			}
+			
+			#if 1
+			/* Completely optional. Trims jaggy edges next to sky when viewing normal/depth/ao buffers */
+			sky_mask = _mm_set_epi32( mat_p[3], mat_p[2], mat_p[1], mat_p[0] );
+			sky_mask = _mm_cmpeq_epi32( _mm_setzero_si128(), sky_mask );
+			rgb = _mm_andnot_si128( sky_mask, rgb );
+			#endif
 			
 			_mm_store_si128( (void*) pixel_p, rgb );
 			
