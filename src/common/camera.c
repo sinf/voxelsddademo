@@ -37,6 +37,12 @@ void update_camera_matrix( Camera *cam )
 	const float cp = cosf( pitch );
 	const float sp = sinf( pitch );
 	
+	float tolh[9] = {
+		1, 0, 0,
+		0, 1, 0,
+		0, 0, 1
+	};
+	
 	mat3f a;
 	mat3f b;
 	
@@ -71,4 +77,5 @@ void update_camera_matrix( Camera *cam )
 	
 	/* asd s */
 	transpose_mat3f( cam->world_to_eye, cam->eye_to_world );
+	multiply_mat3f( cam->world_to_eye_lh, cam->world_to_eye, tolh );
 }
