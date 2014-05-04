@@ -27,19 +27,41 @@ static void normalize_vec( void* restrict px, void* restrict py, void* restrict 
 	_mm_store_ps( pz, _mm_mul_ps( z, t ) );
 }
 
+static __m128i mm_randi( void *state )
+{
+	__m128i x = _mm_load_si128( state );
+	
+#if 0
+	const __m128i a=_mm_set1_epi16( 27893 ), c=_mm_set1_epi16( 7777 );
+	/* Basic 16-bit linear congruential generator. Kinda bad but also very very fast */
+	x = _mm_mullo_epi16( a, x );
+	x = _mm_add_epi16( c, x );
+#else
+	/* This one passed many dieharder tests. More operations though */
+	const __m128i
+	a = _mm_set1_epi32( 1664525 ),
+	b = _mm_set1_epi16( 7777 ),
+	c = _mm_set1_epi32( 1013904223 );
+	
+	__m128i y = _mm_mul_epu32( x, a );
+	x = _mm_add_epi16( x, b );
+	x = _mm_xor_si128( _mm_slli_epi64( x, 27 ), y );
+	x = _mm_add_epi32( x, c );
+#endif
+	
+	_mm_store_si128( state, x );
+	return x;
+}
+
 /* Returns "low" quality random floats in range [0,1[
 Should compile to just 8 instructions even without optimization enabled */
 static __m128 mm_rand( void *my_128bit_state )
 {
-	const __m128i a=_mm_set1_epi16( 27893 ), c=_mm_set1_epi16( 7777 );
 	__m128i x;
 	__m128 f;
 	
-	/* 16-bit linear congruential generator */
-	x = _mm_load_si128( my_128bit_state );
-	x = _mm_mullo_epi16( a, x );
-	x = _mm_add_epi16( c, x );
-	_mm_store_si128( my_128bit_state, x );
+	/* Generate random bits */
+	x = mm_randi( my_128bit_state );
 	
 	x = _mm_srli_epi32( x, 9 ); /* clear sign and exponent */
 	x = _mm_or_si128( x, _mm_set1_epi32( 0x40000000 ) ); /* [0,2[ */
