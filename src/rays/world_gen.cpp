@@ -63,7 +63,7 @@ static void build_tile( uint8 voxels[1<<(3*TILE_SIZE_EXP)], VoxelGenFunc func, u
 	tidv = Bytev( tid );
 	bx.clear();
 	
-	int assertion[ TILE_SIZE_EXP >= BYTE_VEC_LEN ];
+	int assertion[ (int) TILE_SIZE >= (int) BYTE_VEC_LEN ];
 	(void) assertion;
 	
 	for( x=0; x<TILE_SIZE; x++, bx+=one ) {
@@ -158,10 +158,12 @@ static Bytev gen_noise( Bytev x, Bytev y, Bytev z, Bytev w )
 
 /* The stainless kind */
 static Bytev gen_steel( Bytev x, Bytev y, Bytev z, Bytev id ) {
+	(void) id;
 	return Bytev( 8 ) + ( ( x ^ y ^ z ) & 3 );
 }
 
 static Bytev gen_concrete( Bytev x, Bytev y, Bytev z, Bytev id ) {
+	(void)( x + y + z + id );
 	return Bytev( 10 );
 	/*
 	Bytev grain = gen_noise( x, y, z, id ) & 3;
@@ -193,6 +195,8 @@ static int choose_tile( int x, int y, int z, int id, int s )
 	unsigned c = s - 2*r;
 	unsigned u = x - r;
 	unsigned v = z - r;
+	
+	(void) id;
 	
 	if ( u < c && v < c )
 	{
