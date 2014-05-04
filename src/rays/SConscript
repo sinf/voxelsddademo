@@ -1,4 +1,4 @@
 Import("base")
 e=base.Clone()
 e.Append( LIBS=["common"] )
-e.Program(target="../rays.bin",source=e.Object(Glob("*.c")))
+e.Program(target="../rays.bin",source=e.Object(Glob("*.c")+Glob("*.cpp")))

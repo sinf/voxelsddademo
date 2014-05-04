@@ -20,6 +20,7 @@
 #include "text.h"
 #include "graph.h"
 #include "rasterizer.h"
+#include "world_gen.h"
 
 #define DEFAULT_RESX 800
 #define DEFAULT_RESY 600
@@ -113,8 +114,12 @@ static void setup_test_scene( Octree *volume )
 	aabb3f box;
 	int n;
 	
+	#if 1
 	oc_clear( the_volume, 0 );
 	generate_city( volume );
+	#else
+	generate_world( volume );
+	#endif
 	
 	/* Add colored axes */
 	for( n=0; n<3; n++ )
@@ -432,7 +437,7 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 		, (unsigned)( ( graph2.total / graph2.bounds.w + 500 ) / 1000 ),
 		perf.frame_time ? (int)( 1000000 / perf.frame_time ) : 999 );
 	
-	if ( moving_light && 0 )
+	if ( moving_light && 1 )
 	{
 		int p;
 		for( p=0; p<8; p++ )

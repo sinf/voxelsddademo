@@ -27,18 +27,18 @@ static void normalize_vec( void* restrict px, void* restrict py, void* restrict 
 	_mm_store_ps( pz, _mm_mul_ps( z, t ) );
 }
 
-/* Returns random floats in range [0,1[
+/* Returns "low" quality random floats in range [0,1[
 Should compile to just 8 instructions even without optimization enabled */
 static __m128 mm_rand( void *my_128bit_state )
 {
-	const __m128i a = _mm_set1_epi16( 15353 ), c = _mm_set1_epi16( 25613 );
+	const __m128i a=_mm_set1_epi16( 27893 ), c=_mm_set1_epi16( 7777 );
 	__m128i x;
 	__m128 f;
 	
 	/* 16-bit linear congruential generator */
 	x = _mm_load_si128( my_128bit_state );
-	x = _mm_mullo_epi16( x, a );
-	x = _mm_add_epi16( x, c );
+	x = _mm_mullo_epi16( a, x );
+	x = _mm_add_epi16( c, x );
 	_mm_store_si128( my_128bit_state, x );
 	
 	x = _mm_srli_epi32( x, 9 ); /* clear sign and exponent */
