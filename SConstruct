@@ -2,7 +2,8 @@ common_flags=\
 "-Wall -Wextra -std=c99 -pedantic -pthread -march=native "+\
 "-Wno-missing-field-initializers "+\
 "-Wno-char-subscripts "+\
-"-Wno-parentheses"
+"-Wno-parentheses "+\
+"-Wno-unused-function"
 
 # mode : (cc flags, linker flags)
 special_flags={ \
@@ -28,7 +29,7 @@ def build_stuff( mode ):
 	for d in ["common", "rays", "node_editor"]:
 		SConscript( "src/"+d+"/SConscript", variant_dir="build/"+mode+"/"+d, duplicate=0, exports=["base"] )
 
-modes=ARGUMENTS.get( "x", None )
+modes=ARGUMENTS.get( "mode", None )
 modes=special_flags.keys() if modes is None else Split(modes)
 for m in modes:
 	build_stuff(m)

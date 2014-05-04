@@ -21,6 +21,7 @@
 #include "graph.h"
 #include "rasterizer.h"
 #include "world_gen.h"
+#include "microsec.h"
 
 #define DEFAULT_RESX 800
 #define DEFAULT_RESY 600
@@ -184,9 +185,9 @@ static void shoot( int win_x, int win_y, int m )
 }
 
 static int hook_mouse = 0;
-void process_input( int screen_centre_x, int screen_centre_y )
+void process_input( float timestep, int screen_centre_x, int screen_centre_y )
 {
-	float speed = 0.05f;
+	float speed = 5.0f * timestep;
 	vec3f motion = {0.0f, 0.0f, 0.0f};
 	uint8 *keys, buttons;
 	
@@ -205,7 +206,7 @@ void process_input( int screen_centre_x, int screen_centre_y )
 		
 		float x = mouse_motion[0];
 		float y = mouse_motion[1];
-		float fine_zoom = (float) sqrt( x*x + y*y ) * 0.0005f;
+		float fine_zoom = (float) sqrt( x*x + y*y ) * 0.05f * timestep;
 		
 		if ( SDL_GetModState() & KMOD_LSHIFT )
 			fine_zoom *= 0.01;
@@ -225,8 +226,9 @@ void process_input( int screen_centre_x, int screen_centre_y )
 	else if ( hook_mouse )
 	{
 		/* Mouse look */
-		float x = mouse_motion[0] * -0.01f;
-		float y = mouse_motion[1] * -0.01f;
+		float sens = -0.015;
+		float x = mouse_motion[0] * sens;
+		float y = mouse_motion[1] * sens;
 		
 		if ( moving_light ) {
 			light_a1 += x;
@@ -354,7 +356,6 @@ void project_world_to_screen( float scr[2], const Camera *c, float px, float py,
 	scr[1] = v1[1] / v1[3] * res_y + res_y / 2;
 }
 
-
 static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 {
 	static Graph graph = {
@@ -437,31 +438,36 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 		, (unsigned)( ( graph2.total / graph2.bounds.w + 500 ) / 1000 ),
 		perf.frame_time ? (int)( 1000000 / perf.frame_time ) : 999 );
 	
-	if ( moving_light && 1 )
+	if ( moving_light || 1 )
 	{
 		int p;
-		for( p=0; p<8; p++ )
+		for( p=0; p<2; p++ )
 		{
-			SDL_Rect r;
-			float e[2];
-			float x, y, z;
-			float s = 1;
+			const float k = 1;
+			float w[4];
+			float e[4];
+			float s[4];
+			float m[16];
 			
 			/* get_light_pos( w ); */
 			
-			x = s * ( p >> 2 );
-			y = s * ( p >> 1 & 1 );
-			z = s * ( p & 1 );
+			w[0] = k * ( p >> 2 );
+			w[1] = k * ( p >> 1 & 1 );
+			w[2] = k * ( p & 1 );
+			w[3] = 1;
 			
-			project_world_to_screen( e, &camera, x, y, z, surf->w, surf->h );
+			multiply_vec_mat3f( e, camera.world_to_eye, w );
 			
-			draw_text_f( surf, 300, 300 + GLYPH_H * p, "%f, %f", e[0], e[1] );
+			make_frustum( m, -1, 1, -1, 1, 0, 10000 );
+			transform_vec( s, m, e );
 			
-			r.x = (int) e[0] - 2;
-			r.y = (int) e[1] - 2;
-			r.w = 5;
-			r.h = 5;
-			SDL_FillRect( surf, &r, ~0 );
+			draw_text_f( surf, 300, 30 + GLYPH_H * 4 * p,
+			"World: %.3f, %.3f, %.3f, %.3f\n"
+			"Eye: %.3f, %.3f, %.3f, %.3f\n"
+			"Screen: %.3f, %.3f, %.3f, %.3f",
+			w[0], w[1], w[2], w[3],
+			e[0], e[1], e[2], e[3],
+			s[0], s[1], s[2], s[3] );
 		}
 		
 		/* TODO:
@@ -598,6 +604,7 @@ int main( int argc, char **argv )
 	int vflags = 0;
 	char **arg;
 	RayPerfInfo perf = {0};
+	uint64 prev_tick_time;
 	
 	for( arg=argv+argc-1; arg!=argv; arg-- )
 	{
@@ -647,10 +654,16 @@ int main( int argc, char **argv )
 		start_render_threads( n_threads );
 	}
 	
+	prev_tick_time = get_microsec();
+	
 	for( ;; )
 	{
 		SDL_Event event;
 		FILE *file;
+		
+		uint64 now = get_microsec();
+		float timestep = ( now - prev_tick_time ) * 1e-6;
+		prev_tick_time = now;
 		
 		while( SDL_PollEvent(&event) )
 		{
@@ -854,8 +867,8 @@ int main( int argc, char **argv )
 					break;
 			}
 		}
-		process_input( screen->w >> 1, screen->h >> 1 );
 		
+		process_input( timestep, screen->w >> 1, screen->h >> 1 );
 		begin_volume_rendering( &camera, the_volume ); /* start worker threads */
 		
 		if ( 0 )
