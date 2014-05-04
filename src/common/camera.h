@@ -18,6 +18,7 @@ typedef struct Camera {
 	
 	_MM_ALIGN16 mat3f eye_to_world; /* Used for software ray casting */
 	_MM_ALIGN16 mat3f world_to_eye; /* Modelview */
+	_MM_ALIGN16 mat3f world_to_eye_lh; /* Modelview */
 	_MM_ALIGN16 mat4f eye_to_view;
 } Camera;
 

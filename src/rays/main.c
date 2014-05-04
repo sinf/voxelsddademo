@@ -187,7 +187,7 @@ static void shoot( int win_x, int win_y, int m )
 static int hook_mouse = 0;
 void process_input( float timestep, int screen_centre_x, int screen_centre_y )
 {
-	float speed = 5.0f * timestep;
+	float speed = 1.0f * timestep;
 	vec3f motion = {0.0f, 0.0f, 0.0f};
 	uint8 *keys, buttons;
 	
@@ -208,7 +208,7 @@ void process_input( float timestep, int screen_centre_x, int screen_centre_y )
 		float y = mouse_motion[1];
 		float fine_zoom = (float) sqrt( x*x + y*y ) * 0.05f * timestep;
 		
-		if ( SDL_GetModState() & KMOD_LSHIFT )
+		if ( SDL_GetModState() & KMOD_LCTRL )
 			fine_zoom *= 0.01;
 		
 		if ( y < 0 )
@@ -227,8 +227,13 @@ void process_input( float timestep, int screen_centre_x, int screen_centre_y )
 	{
 		/* Mouse look */
 		float sens = -0.015;
-		float x = mouse_motion[0] * sens;
-		float y = mouse_motion[1] * sens;
+		float x, y;
+		
+		if ( keys[SDLK_LCTRL] )
+			sens *= 0.2f;
+		
+		x = mouse_motion[0] * sens;
+		y = mouse_motion[1] * sens;
 		
 		if ( moving_light ) {
 			light_a1 += x;
@@ -253,6 +258,8 @@ void process_input( float timestep, int screen_centre_x, int screen_centre_y )
 	else if ( buttons & SDL_BUTTON(3) )
 		shoot( mouse_x, mouse_y, 0 );
 	
+	if ( keys[SDLK_LSHIFT] )
+		speed *= 5.f;
 	if ( keys[SDLK_LCTRL] )
 		speed *= 0.2f;
 	
@@ -275,28 +282,34 @@ static void expand_matrix( float b[16], const float a[9] )
 	b[3] = b[7] = b[11] = b[15] = 0;
 }
 
-static void make_frustum( float m[16], float l, float r, float t, float b, float n, float f )
+static void transpose_4x4( float out[16], const float in[16] )
 {
-	m[0] = 2 * n / ( r - l );
-	m[1] = 0;
-	m[2] = 0;
-	m[3] = 0;
-	
-	m[4] = 0;
-	m[5] = 2 * n / ( t - b );
-	m[6] = 0;
-	m[7] = 0;
-	
-	m[8] = ( r + l ) / ( r - l );
-	m[9] = ( t + b ) / ( t - b );
-	m[10] = -( f + n ) / ( f - n );
-	m[11] = -1;
-	
-	m[12] = 0;
-	m[13] = 0;
-	m[14] = -2 * f * n / ( f - n );
-	m[15] = 0;
+	__m128 a, b, c, d;
+	a = _mm_load_ps( in );
+	b = _mm_load_ps( in + 4 );
+	c = _mm_load_ps( in + 8 );
+	d = _mm_load_ps( in + 12 );
+	_MM_TRANSPOSE4_PS( a, b, c, d );
+	_mm_store_ps( out, a );
+	_mm_store_ps( out + 4, b );
+	_mm_store_ps( out + 8, c );
+	_mm_store_ps( out + 12, d );
 }
+
+static void make_frustum( float m[16], float r, float t, float n, float f )
+{
+	memset( m, 0, sizeof(float)*16 );
+	m[0] = 1 / r;
+	m[5] = 1 / t;
+	m[10] = -2 / ( f - n );
+	m[11] = ( n - f ) / ( f - n );
+}
+/*
+0 1 2 3
+4 5 6 7
+8 9 10 11
+12 13 14 15
+*/
 
 static void mult_mat4( float c[16], const float a[16], const float b[16] )
 {
@@ -325,35 +338,6 @@ static void transform_vec( float c[4], const float a[16], const float b[4] )
 	c[2] = a[8]*b[0] + a[9]*b[1] + a[10]*b[2] + a[11]*b[3];
 	c[3] = a[12]*b[0] + a[13]*b[1] + a[14]*b[2] + a[15]*b[3];
 	#endif
-}
-
-void project_world_to_screen( float scr[2], const Camera *c, float px, float py, float pz, float res_x, float res_y )
-{
-	float mv[16];
-	float pr[16];
-	float mvp[16];
-	float v[4], v1[4];
-	
-	expand_matrix( mv, c->world_to_eye );
-	memcpy( mv+12, c->pos, 3 * sizeof *mv );
-	mv[15]=1;
-	
-	make_frustum( pr,
-		-1, 1,
-		-1, 1,
-		0, 10000 );
-	
-	mult_mat4( mvp, pr, mv );
-	
-	v[0] = px;
-	v[1] = py;
-	v[2] = pz;
-	v[3] = 1;
-	
-	transform_vec( v1, mvp, v );
-	
-	scr[0] = v1[0] / v1[3] * res_x + res_x / 2;
-	scr[1] = v1[1] / v1[3] * res_y + res_y / 2;
 }
 
 static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
@@ -441,33 +425,67 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	if ( moving_light || 1 )
 	{
 		int p;
-		for( p=0; p<2; p++ )
+		for( p=0; p<8; p++ )
 		{
 			const float k = 1;
+			int x_bit, y_bit, z_bit;
 			float w[4];
 			float e[4];
 			float s[4];
 			float m[16];
+			int px, py;
+			SDL_Rect r;
+			Uint32 c;
+			float temp;
+			
+			extern float calc_raydir_z( const Camera *camera );
+			extern float screen_uv_scale[2], screen_uv_min[2];
 			
 			/* get_light_pos( w ); */
 			
-			w[0] = k * ( p >> 2 );
-			w[1] = k * ( p >> 1 & 1 );
-			w[2] = k * ( p & 1 );
+			x_bit = p >> 2;
+			y_bit = p >> 1 & 1;
+			z_bit = p & 1;
+			
+			w[0] = k * x_bit;
+			w[1] = k * y_bit;
+			w[2] = k * z_bit;
 			w[3] = 1;
 			
-			multiply_vec_mat3f( e, camera.world_to_eye, w );
+			w[0] = ( w[0] - camera.pos[0] );
+			w[1] = ( w[1] - camera.pos[1] );
+			w[2] = -( w[2] - camera.pos[2] );
 			
-			make_frustum( m, -1, 1, -1, 1, 0, 10000 );
+			expand_matrix( m, camera.eye_to_world );
+			m[15] = 1;
+			transpose_4x4( m, m );
+			transform_vec( e, m, w );
+			
+			temp = -calc_raydir_z( &camera );
+			make_frustum( m, screen_uv_min[0] / temp, screen_uv_min[1] / temp, 0, 10000 );
 			transform_vec( s, m, e );
 			
-			draw_text_f( surf, 300, 30 + GLYPH_H * 4 * p,
+			px = surf->w / 2 * ( 1.0f + s[0] / s[3] );
+			py = surf->h / 2 * ( 1.0f + s[1] / s[3] );
+			
+			if ( 0 )
+			draw_text_f( surf, 300, 30 + GLYPH_H * 5 * p,
 			"World: %.3f, %.3f, %.3f, %.3f\n"
 			"Eye: %.3f, %.3f, %.3f, %.3f\n"
-			"Screen: %.3f, %.3f, %.3f, %.3f",
+			"Screen: %.3f, %.3f, %.3f, %.3f\n"
+			"Pixel: %d, %d",
 			w[0], w[1], w[2], w[3],
 			e[0], e[1], e[2], e[3],
-			s[0], s[1], s[2], s[3] );
+			s[0], s[1], s[2], s[3],
+			px, py );
+			
+			r.x = px - 2;
+			r.y = py - 2;
+			r.w = 4;
+			r.h = 4;
+			
+			c = SDL_MapRGB( surf->format, 127 + x_bit * 128, 127 + y_bit * 128, 127 + z_bit * 128 );
+			SDL_FillRect( surf, &r, c );
 		}
 		
 		/* TODO:

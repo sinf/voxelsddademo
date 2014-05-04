@@ -21,8 +21,8 @@ int show_depth_buffer = 0;
 int enable_aoccl = 0; /* ambient occlusion */
 int enable_dac_method = 0;
 
-static float screen_uv_scale[2];
-static float screen_uv_min[2];
+float screen_uv_scale[2];
+float screen_uv_min[2];
 static float light_x[4], light_y[4], light_z[4];
 
 void set_light_pos( float x, float y, float z )
@@ -32,7 +32,7 @@ void set_light_pos( float x, float y, float z )
 	_mm_store_ps( light_z, _mm_set1_ps(z) );
 }
 
-static float calc_raydir_z( const Camera *camera ) {
+float calc_raydir_z( const Camera *camera ) {
 	return fabs( screen_uv_min[0] ) / tanf( camera->fovx * 0.5f );
 }
 
