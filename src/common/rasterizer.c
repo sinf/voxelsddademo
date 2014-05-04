@@ -103,16 +103,18 @@ int draw_polygon( uint32 color, int num_verts, float fverts[] )
 		y1 = min( sw->y, se->y );
 		
 		while( dest_y < y1 ) {
-			int x0, x1;
+			int x0_, x1_, x0, x1;
 			
-			x0 = nw->x + slope_w * ( dest_y - nw->y );
-			x1 = ne->x + slope_e * ( dest_y - ne->y );
+			x0_ = nw->x + slope_w * ( dest_y - nw->y );
+			x1_ = ne->x + slope_e * ( dest_y - ne->y );
 			
-			x0 = max( x0, 0 );
-			x1 = min( x1, (int) render_resx );
+			x0_ = max( x0_, 0 );
+			x1_ = min( x1_, (int) render_resx );
 			
-			if ( x1 > x0 )
-				memset32( OUT_BUFFER + dest_y * render_resx + x0, color, x1 - x0 );
+			x0 = min( x0_, x1_ ); /* allow vertices to be specified in either clockwise or counter-clockwise order */
+			x1 = max( x0_, x1_ );
+			
+			memset32( OUT_BUFFER + dest_y * render_resx + x0, color, x1 - x0 );
 			
 			++dest_y;
 		}

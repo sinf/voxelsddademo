@@ -53,7 +53,7 @@ static float light_r = 1;
 static int moving_light = 0;
 
 static Octree *the_volume = NULL;
-static Camera camera;
+static Camera the_camera;
 
 static void get_light_pos( float p[3] )
 {
@@ -139,15 +139,15 @@ static void setup_test_scene( Octree *volume )
 
 static void reset_camera( void )
 {
-	camera.pos[0] = 0.5f;
-	camera.pos[1] = 0.5f;
-	camera.pos[2] = -1.0f;
+	the_camera.pos[0] = 0.5f;
+	the_camera.pos[1] = 0.5f;
+	the_camera.pos[2] = -1.0f;
 	
-	camera.yaw = 0.0f;
-	camera.pitch = 0.0f;
+	the_camera.yaw = 0.0f;
+	the_camera.pitch = 0.0f;
 	
-	set_projection( &camera, DEFAULT_FOV, screen->w / (float) screen->h );
-	update_camera_matrix( &camera );
+	set_projection( &the_camera, DEFAULT_FOV, screen->w / (float) screen->h );
+	update_camera_matrix( &the_camera );
 }
 
 static void shoot( int win_x, int win_y, int m )
@@ -160,7 +160,7 @@ static void shoot( int win_x, int win_y, int m )
 	x = win_x / (float) screen->w * render_resx;
 	y = win_y / (float) screen->h * render_resy;
 	
-	get_primary_ray( &ray, &camera, the_volume, x, y );
+	get_primary_ray( &ray, &the_camera, the_volume, x, y );
 	depth = oc_traverse( the_volume, &mat, ray.o[0], ray.o[1], ray.o[2], ray.d[0], ray.d[1], ray.d[2], NAN );
 	
 	if ( mat != 0 )
@@ -185,7 +185,7 @@ static void shoot( int win_x, int win_y, int m )
 }
 
 static int hook_mouse = 0;
-void process_input( float timestep, int screen_centre_x, int screen_centre_y )
+void process_input( float timestep, int screen_centre_x, int screen_centre_y, Camera *camera )
 {
 	float speed = 1.0f * timestep;
 	vec3f motion = {0.0f, 0.0f, 0.0f};
@@ -241,7 +241,7 @@ void process_input( float timestep, int screen_centre_x, int screen_centre_y )
 			update_light_pos();
 		}
 		else
-			rotate_camera( &camera, x, y );
+			rotate_camera( camera, x, y );
 		
 		should_warp_mouse = 1;
 	}
@@ -270,8 +270,8 @@ void process_input( float timestep, int screen_centre_x, int screen_centre_y )
 	if ( keys[SDLK_e] ) motion[1] += speed;
 	if ( keys[SDLK_q] ) motion[1] -= speed;
 	
-	update_camera_matrix( &camera );
-	move_camera_local( &camera, motion );
+	update_camera_matrix( camera );
+	move_camera_local( camera, motion );
 }
 
 static void expand_matrix( float b[16], const float a[9] )
@@ -340,7 +340,20 @@ static void transform_vec( float c[4], const float a[16], const float b[4] )
 	#endif
 }
 
-static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
+static void draw_quad( uint32 color, float a[2], float b[2], float c[2], float d[2] )
+{
+	size_t s = 2 * sizeof( float );
+	float v[4*2];
+	
+	memcpy( v, a, s );
+	memcpy( v+2, b, s );
+	memcpy( v+4, c, s );
+	memcpy( v+6, d, s );
+	
+	draw_polygon( color, 4, v );
+}
+
+static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf, Camera *camera )
 {
 	static Graph graph = {
 		{0,0,MAX_GRAPH_W,80},
@@ -424,7 +437,10 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 	
 	if ( moving_light || 1 )
 	{
+		float verts[4*2];
 		int p;
+		int vis;
+		
 		for( p=0; p<8; p++ )
 		{
 			const float k = 1;
@@ -432,14 +448,21 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 			float w[4];
 			float e[4];
 			float s[4];
+			float m0[16];
 			float m[16];
 			int px, py;
 			SDL_Rect r;
 			Uint32 c;
 			float temp;
+			float tolh[] = {
+				-1, 0, 0,
+				0, -1, 0,
+				0, 0, 1,
+				0
+			};
 			
-			extern float calc_raydir_z( const Camera *camera );
-			extern float screen_uv_scale[2], screen_uv_min[2];
+			extern float calc_raydir_z( const Camera * );
+			extern float screen_uv_min[2];
 			
 			/* get_light_pos( w ); */
 			
@@ -452,16 +475,16 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 			w[2] = k * z_bit;
 			w[3] = 1;
 			
-			w[0] = ( w[0] - camera.pos[0] );
-			w[1] = ( w[1] - camera.pos[1] );
-			w[2] = -( w[2] - camera.pos[2] );
+			w[0] = -( w[0] - camera->pos[0] );
+			w[1] = -( w[1] - camera->pos[1] );
+			w[2] = -( w[2] - camera->pos[2] );
 			
-			expand_matrix( m, camera.eye_to_world );
+			multiply_mat3f( m0, camera->eye_to_world, tolh );
+			expand_matrix( m, m0 );
 			m[15] = 1;
-			transpose_4x4( m, m );
 			transform_vec( e, m, w );
 			
-			temp = -calc_raydir_z( &camera );
+			temp = -calc_raydir_z( camera );
 			make_frustum( m, screen_uv_min[0] / temp, screen_uv_min[1] / temp, 0, 10000 );
 			transform_vec( s, m, e );
 			
@@ -484,9 +507,27 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf )
 			r.w = 4;
 			r.h = 4;
 			
+			verts[2*p] = px;
+			verts[2*p+1] = py;
+			
 			c = SDL_MapRGB( surf->format, 127 + x_bit * 128, 127 + y_bit * 128, 127 + z_bit * 128 );
 			SDL_FillRect( surf, &r, c );
 		}
+		
+		vis = get_visible_cube_vertices( camera->pos[0] * 4096, camera->pos[1] * 4096, camera->pos[2] * 4096, 0, 4096 );
+		
+		/* faces:
+		000 - 001 - 011 - 010
+		100 - 101 - 110 - 011
+		000 - 001 - 101 - 100
+		010 - 011 - 111 - 110
+		000 - 010 - 110 - 100
+		001 - 011 - 111 - 101
+		*/
+		
+		/*
+		draw_polygon( 0xFFFFFF, 4, verts );
+		*/
 		
 		/* TODO:
 		Figure out screen space coordinates of the light
@@ -623,6 +664,7 @@ int main( int argc, char **argv )
 	char **arg;
 	RayPerfInfo perf = {0};
 	uint64 prev_tick_time;
+	Camera prev_camera;
 	
 	for( arg=argv+argc-1; arg!=argv; arg-- )
 	{
@@ -673,6 +715,7 @@ int main( int argc, char **argv )
 	}
 	
 	prev_tick_time = get_microsec();
+	prev_camera = the_camera;
 	
 	for( ;; )
 	{
@@ -818,11 +861,11 @@ int main( int argc, char **argv )
 							break;
 						
 						case SDLK_F9:
-							set_projection( &camera, camera.fovx + FOV_INCR, screen->w / (float) screen->h );
+							set_projection( &the_camera, the_camera.fovx + FOV_INCR, screen->w / (float) screen->h );
 							break;
 						
 						case SDLK_F10:
-							set_projection( &camera, camera.fovx - FOV_INCR, screen->w / (float) screen->h );
+							set_projection( &the_camera, the_camera.fovx - FOV_INCR, screen->w / (float) screen->h );
 							break;
 						
 						case SDLK_F11:
@@ -886,8 +929,9 @@ int main( int argc, char **argv )
 			}
 		}
 		
-		process_input( timestep, screen->w >> 1, screen->h >> 1 );
-		begin_volume_rendering( &camera, the_volume ); /* start worker threads */
+		prev_camera = the_camera;
+		process_input( timestep, screen->w >> 1, screen->h >> 1, &the_camera );
+		begin_volume_rendering( &the_camera, the_volume ); /* start worker threads */
 		
 		if ( 0 )
 		{
@@ -927,7 +971,7 @@ int main( int argc, char **argv )
 			memcpy( screen->pixels, render_output_rgba, render_resx*render_resy*4 );
 		SDL_UnlockSurface( screen );
 		
-		draw_ui_overlay( screen, perf );
+		draw_ui_overlay( screen, perf, &prev_camera );
 		
 		/* Flip the buffers of OS */
 		SDL_Flip( screen );
