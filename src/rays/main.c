@@ -435,7 +435,7 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf, Camera *camera
 		, (unsigned)( ( graph2.total / graph2.bounds.w + 500 ) / 1000 ),
 		perf.frame_time ? (int)( 1000000 / perf.frame_time ) : 999 );
 	
-	if ( moving_light || 1 )
+	if ( moving_light && 0 )
 	{
 		float verts[4*2];
 		int p;
