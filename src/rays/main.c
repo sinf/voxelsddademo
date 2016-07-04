@@ -401,9 +401,8 @@ static void draw_ui_overlay( SDL_Surface *surf, Camera *camera )
 		*/
 	}
 	
-	if ( 0 )
-		return;
-	
+	if ( 1 ) return;
+	// visualize AABB of the voxel volume
 	vt = get_cube_silhouette( 1, 2, camera->pos[0]+1, camera->pos[1]+1, camera->pos[2]+1 );
 	draw_polygon( 0xFF0000, gather_vertices( sil, verts, vt ), sil );
 }
@@ -611,7 +610,7 @@ int main( int argc, char **argv )
 	RayPerfInfo perf = {0};
 	uint64 prev_tick_time;
 	Camera prev_camera;
-	int rasterize_voxels = 1;
+	int rasterize_voxels = 0;
 	
 	for( arg=argv+argc-1; arg!=argv; arg-- )
 	{

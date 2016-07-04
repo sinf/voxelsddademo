@@ -1,0 +1,23 @@
+
+1-5 = brush radius
+f1 = octree disk dump (oc_cahe.dat)
+f2 = load octree disk dump
+f3 = reset camera
+f4 = generate a new octree
+f5 = fullscreen
+f6 = render mode
+f7,f8 = detail level
+f9,f10 = field of view
+f11 = shadows
+space = grab mouse
+p = phong on/off
+u = upscale on/off
+o = ambient occlusion on/off
+i = dac method
+l = select light/camera to move
+k = rasterization mode on/off
+mouse wheel = set material
+lmb = add terrain
+rmb = remove terrain
+
+
