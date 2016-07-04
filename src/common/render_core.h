@@ -25,6 +25,9 @@ extern uint32 materials_rgb[NUM_MATERIALS]; /* rgb colors (any pixel format is o
 extern float materials_diff[NUM_MATERIALS][4]; /* rgb diffuse reflection constants. last component is padding */
 extern float materials_spec[NUM_MATERIALS][4]; /* rgb specular color & exponent */ 
 
+extern float calc_raydir_z( const Camera * );
+extern float screen_uv_min[2];
+
 void set_light_pos( float x, float y, float z );
 
 /* (Re)allocates memory. Restarts render threads */

@@ -21,7 +21,7 @@ int show_depth_buffer = 0;
 int enable_aoccl = 0; /* ambient occlusion */
 int enable_dac_method = 0;
 
-float screen_uv_scale[2];
+static float screen_uv_scale[2];
 float screen_uv_min[2];
 static float light_x[4], light_y[4], light_z[4];
 

@@ -7,7 +7,10 @@
 #define ZNEAR 0.01
 #define ZFAR 50.0
 
-typedef struct Camera {
+struct Camera;
+typedef struct Camera Camera;
+
+struct Camera {
 	/* World coordinates */
 	_MM_ALIGN16 vec3f pos;
 	
@@ -18,9 +21,10 @@ typedef struct Camera {
 	
 	_MM_ALIGN16 mat3f eye_to_world; /* Used for software ray casting */
 	_MM_ALIGN16 mat3f world_to_eye; /* Modelview */
-	_MM_ALIGN16 mat3f world_to_eye_lh; /* Modelview */
 	_MM_ALIGN16 mat4f eye_to_view;
-} Camera;
+	
+	_MM_ALIGN16 float mvp[16];
+};
 
 /* Simply rotates yaw & pitch and makes sure the values stay in proper range. */
 void rotate_camera( Camera *cam, float delta_yaw, float delta_pitch );
