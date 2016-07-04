@@ -23,6 +23,8 @@
 #include "world_gen.h"
 #include "microsec.h"
 
+#include "oc_rasterizer.h"
+
 #define DEFAULT_RESX 800
 #define DEFAULT_RESY 600
 #define DEFAULT_OCTREE_DEPTH 9
@@ -340,20 +342,73 @@ static void transform_vec( float c[4], const float a[16], const float b[4] )
 	#endif
 }
 
-static void draw_quad( uint32 color, float a[2], float b[2], float c[2], float d[2] )
+static uint32 gather_vertices( float dst[6*2], const float src[8*2], uint32 bits )
 {
-	size_t s = 2 * sizeof( float );
-	float v[4*2];
-	
-	memcpy( v, a, s );
-	memcpy( v+2, b, s );
-	memcpy( v+4, c, s );
-	memcpy( v+6, d, s );
-	
-	draw_polygon( color, 4, v );
+	uint32 cc, c;
+	cc = c = bits & 0x7;
+	bits >>= 3;
+	while( c-- ) {
+		int n = bits & 0x7;
+		dst[0] = src[2*n];
+		dst[1] = src[2*n+1];
+		dst += 2;
+		bits >>= 3;
+	}
+	return cc;
 }
 
-static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf, Camera *camera )
+static void draw_ui_overlay( SDL_Surface *surf, Camera *camera )
+{
+	float verts[8*2];
+	float sil[6*2];
+	int p;
+	uint32 vt;
+	
+	for( p=0; p<8; p++ )
+	{
+		const float k = 1;
+		int x_bit, y_bit, z_bit;
+		float w[4];
+		float s[4];
+		int px, py;
+		
+		/* get_light_pos( w ); */
+		
+		x_bit = p >> 2;
+		y_bit = p >> 1 & 1;
+		z_bit = p & 1;
+		
+		w[0] = k * x_bit;
+		w[1] = k * y_bit;
+		w[2] = k * z_bit;
+		w[3] = 1;
+		
+		w[0] = -( w[0] - camera->pos[0] );
+		w[1] = -( w[1] - camera->pos[1] );
+		w[2] = -( w[2] - camera->pos[2] );
+		
+		transform_vec( s, camera->mvp, w );
+		
+		px = surf->w / 2 * ( 1.0f + s[0] / s[3] );
+		py = surf->h / 2 * ( 1.0f + s[1] / s[3] );
+		
+		verts[2*p] = px;
+		verts[2*p+1] = py;
+		
+		/*
+		c = SDL_MapRGB( surf->format, 127 + x_bit * 128, 127 + y_bit * 128, 127 + z_bit * 128 );
+		SDL_FillRect( surf, &r, c );
+		*/
+	}
+	
+	if ( 0 )
+		return;
+	
+	vt = get_cube_silhouette( 1, 2, camera->pos[0]+1, camera->pos[1]+1, camera->pos[2]+1 );
+	draw_polygon( 0xFF0000, gather_vertices( sil, verts, vt ), sil );
+}
+
+static void draw_text_overlay( SDL_Surface *surf, RayPerfInfo perf, Camera *camera )
 {
 	static Graph graph = {
 		{0,0,MAX_GRAPH_W,80},
@@ -395,13 +450,21 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf, Camera *camera
 		"Nodes: %u\n"
 		"Mat=%d\n"
 		"DAC=%d\n"
+		"(%.2f,%.2f,%.2f)"
+		"(%.2f,%.2f,%.2f)"
 		,
 		(int) the_volume->size,
 		(int) the_volume->root_level - oc_detail_level,
 		(int) the_volume->root_level,
 		the_volume->num_nodes,
 		brush_mat,
-		enable_dac_method
+		enable_dac_method,
+		camera->pos[0],
+		camera->pos[1],
+		camera->pos[2],
+		camera->eye_to_world[6],
+		camera->eye_to_world[7],
+		camera->eye_to_world[8]
 		);
 	
 	snprintf( buf, sizeof(buf), "%ux%u|%4u ms|%u K rays|%3u.%03u M rays/sec ",
@@ -434,123 +497,6 @@ static void draw_ui_overlay( SDL_Surface *surf, RayPerfInfo perf, Camera *camera
 		"FPS: %-3d\n"
 		, (unsigned)( ( graph2.total / graph2.bounds.w + 500 ) / 1000 ),
 		perf.frame_time ? (int)( 1000000 / perf.frame_time ) : 999 );
-	
-	if ( moving_light && 0 )
-	{
-		float verts[4*2];
-		int p;
-		int vis;
-		
-		for( p=0; p<8; p++ )
-		{
-			const float k = 1;
-			int x_bit, y_bit, z_bit;
-			float w[4];
-			float e[4];
-			float s[4];
-			float m0[16];
-			float m[16];
-			int px, py;
-			SDL_Rect r;
-			Uint32 c;
-			float temp;
-			float tolh[] = {
-				-1, 0, 0,
-				0, -1, 0,
-				0, 0, 1,
-				0
-			};
-			
-			extern float calc_raydir_z( const Camera * );
-			extern float screen_uv_min[2];
-			
-			/* get_light_pos( w ); */
-			
-			x_bit = p >> 2;
-			y_bit = p >> 1 & 1;
-			z_bit = p & 1;
-			
-			w[0] = k * x_bit;
-			w[1] = k * y_bit;
-			w[2] = k * z_bit;
-			w[3] = 1;
-			
-			w[0] = -( w[0] - camera->pos[0] );
-			w[1] = -( w[1] - camera->pos[1] );
-			w[2] = -( w[2] - camera->pos[2] );
-			
-			multiply_mat3f( m0, camera->eye_to_world, tolh );
-			expand_matrix( m, m0 );
-			m[15] = 1;
-			transform_vec( e, m, w );
-			
-			temp = -calc_raydir_z( camera );
-			make_frustum( m, screen_uv_min[0] / temp, screen_uv_min[1] / temp, 0, 10000 );
-			transform_vec( s, m, e );
-			
-			px = surf->w / 2 * ( 1.0f + s[0] / s[3] );
-			py = surf->h / 2 * ( 1.0f + s[1] / s[3] );
-			
-			if ( 0 )
-			draw_text_f( surf, 300, 30 + GLYPH_H * 5 * p,
-			"World: %.3f, %.3f, %.3f, %.3f\n"
-			"Eye: %.3f, %.3f, %.3f, %.3f\n"
-			"Screen: %.3f, %.3f, %.3f, %.3f\n"
-			"Pixel: %d, %d",
-			w[0], w[1], w[2], w[3],
-			e[0], e[1], e[2], e[3],
-			s[0], s[1], s[2], s[3],
-			px, py );
-			
-			r.x = px - 2;
-			r.y = py - 2;
-			r.w = 4;
-			r.h = 4;
-			
-			verts[2*p] = px;
-			verts[2*p+1] = py;
-			
-			c = SDL_MapRGB( surf->format, 127 + x_bit * 128, 127 + y_bit * 128, 127 + z_bit * 128 );
-			SDL_FillRect( surf, &r, c );
-		}
-		
-		vis = get_visible_cube_vertices( camera->pos[0] * 4096, camera->pos[1] * 4096, camera->pos[2] * 4096, 0, 4096 );
-		
-		/* faces:
-		000 - 001 - 011 - 010
-		100 - 101 - 110 - 011
-		000 - 001 - 101 - 100
-		010 - 011 - 111 - 110
-		000 - 010 - 110 - 100
-		001 - 011 - 111 - 101
-		*/
-		
-		/*
-		draw_polygon( 0xFFFFFF, 4, verts );
-		*/
-		
-		/* TODO:
-		Figure out screen space coordinates of the light
-		Draw text and some indicator arrow/box
-		
-		float w[3], e[3];
-		int x, y;
-		float ratio, u_scale, u_min, v_min, v_scale;
-		
-		get_light_pos( w );
-		multiply_vec_mat3f( e, camera.world_to_eye, w );
-		
-		ratio = render_resx / (float) render_resy;
-		u_min = -0.5;
-		u_scale = 1.0 / render_resx;
-		v_min = 0.5 / screen_ratio;
-		v_scale = -1.0 / render_resy / screen_ratio;
-		
-		x = e[0] / e[2] - u_min
-		
-		draw_text_f( surf,
-		*/
-	}
 }
 
 static void load_materials( SDL_PixelFormat *format )
@@ -665,6 +611,7 @@ int main( int argc, char **argv )
 	RayPerfInfo perf = {0};
 	uint64 prev_tick_time;
 	Camera prev_camera;
+	int rasterize_voxels = 1;
 	
 	for( arg=argv+argc-1; arg!=argv; arg-- )
 	{
@@ -902,6 +849,9 @@ int main( int argc, char **argv )
 						case SDLK_l:
 							moving_light = !moving_light;
 							break;
+						case SDLK_k:
+							rasterize_voxels = !rasterize_voxels;
+							break;
 						
 						case SDLK_ESCAPE:
 							quit();
@@ -931,54 +881,33 @@ int main( int argc, char **argv )
 		
 		prev_camera = the_camera;
 		process_input( timestep, screen->w >> 1, screen->h >> 1, &the_camera );
-		begin_volume_rendering( &the_camera, the_volume ); /* start worker threads */
 		
-		if ( 0 )
-		{
-			int x, y;
-			float verts[4*2];
-			int v;
+		if ( rasterize_voxels ) {
+			SDL_FillRect( screen, 0, 0 );
+			SDL_LockSurface( screen );
+			rasterize_octree( the_volume, &the_camera, screen );
+			SDL_UnlockSurface( screen );
+		} else {
+			/* Start rendering the next frame */
+			begin_volume_rendering( &the_camera, the_volume );
 			
-			SDL_GetMouseState( &x, &y );
-			
-			verts[0] = x;
-			verts[1] = y;
-			
-			verts[2] = 100;
-			verts[3] = 100;
-			
-			verts[4] = 300;
-			verts[5] = 300;
-			
-			verts[6] = 500;
-			verts[7] = 100;
-			
-			draw_polygon( 0xFFFFFF, 4, verts );
-			
-			for( v=0; v<4*2; v+=2 )
-				draw_box( 0xFF0000, verts[v]-3, verts[v+1]-3, 6, 6 );
-			
-			/*
-			draw_box( 0xFFFFFF, x-50, y-50, 100, 100 );
-			*/
+			/* Put the previous frame on screen */
+			SDL_LockSurface( screen );
+			draw_ui_overlay( screen, &prev_camera );
+			if ( upscale_shift )
+				blit2x( screen->pixels, render_output_rgba, render_resx, render_resy, screen->pitch );
+			else
+				memcpy( screen->pixels, render_output_rgba, render_resx*render_resy*4 );
+			SDL_UnlockSurface( screen );
 		}
 		
-		/* Put the previous frame on screen */
-		SDL_LockSurface( screen );
-		if ( upscale_shift )
-			blit2x( screen->pixels, render_output_rgba, render_resx, render_resy, screen->pitch );
-		else
-			memcpy( screen->pixels, render_output_rgba, render_resx*render_resy*4 );
-		SDL_UnlockSurface( screen );
-		
-		draw_ui_overlay( screen, perf, &prev_camera );
-		
-		/* Flip the buffers of OS */
+		draw_text_overlay( screen, perf, &prev_camera );
 		SDL_Flip( screen );
 		
-		end_volume_rendering( &perf ); /* End worker threads */
-		
-		swap_render_buffers();
+		if ( !rasterize_voxels ) {
+			end_volume_rendering( &perf );
+			swap_render_buffers();
+		}
 	}
 	
 	quit();
