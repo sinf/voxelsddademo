@@ -1,0 +1,3 @@
+Import("base")
+e=base.Clone()
+b=e.SharedLibrary(target="../common",source=e.SharedObject(Glob("*.c")))

@@ -1,0 +1,4 @@
+Import("base")
+e=base.Clone()
+e.Append( LIBS=["common"] )
+e.Program(target="../node_editor.bin",source=e.Object(Glob("*.c")))
