@@ -1,0 +1,12 @@
+.sconsign.dblite
+*.blend*
+cube_indices.png
+libcommon.so
+rays.bin
+build/*
+txt/*
+inspiration/
+
+oc_cache.dat
+pics/
+junk/
